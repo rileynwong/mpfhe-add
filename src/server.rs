@@ -1,17 +1,15 @@
-use itertools::Itertools;
-use phantom_zone::{
-    aggregate_server_key_shares, set_common_reference_seed, set_parameter_set, FheUint8,
-    KeySwitchWithId, ParameterSelector, SampleExtractor,
-};
+use phantom_zone::{set_common_reference_seed, set_parameter_set, FheUint8, ParameterSelector};
+use tabled::Tabled;
 
+use crate::circuit::{derive_server_key, evaluate_circuit};
 use crate::{Cipher, DecryptionShare, Seed, ServerKeyShare, UserId};
 use rand::{thread_rng, RngCore};
 use std::borrow::Cow;
 use std::collections::HashMap;
 
 use rocket::tokio::sync::Mutex;
-use rocket::State;
-use rocket::{get, launch, post, routes};
+use rocket::{get, post, routes};
+use rocket::{Build, Rocket, State};
 
 use rocket::serde::json::Json;
 use rocket::serde::msgpack::MsgPack;
@@ -128,17 +126,23 @@ impl UserStorage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
-enum Registration {
+pub enum UserStatus {
     IDAcquired,
     CipherSubmitted,
     DecryptionShareSubmitted,
 }
+impl std::fmt::Display for UserStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Tabled)]
 #[serde(crate = "rocket::serde")]
 pub struct RegisteredUser {
+    id: usize,
     pub name: String,
-    registration: Registration,
+    status: UserStatus,
 }
 
 // We're going to store all of the messages here. No need for a DB.
@@ -204,8 +208,9 @@ async fn register(name: &str, users: Users<'_>) -> Json<RegistrationOut> {
     let mut users = users.lock().await;
     let user_id = users.len();
     let user = RegisteredUser {
+        id: user_id,
         name: name.to_string(),
-        registration: Registration::IDAcquired,
+        status: UserStatus::IDAcquired,
     };
     users.push(user);
     Json(RegistrationOut {
@@ -236,12 +241,8 @@ async fn submit(
     let mut ss = ss.lock().await;
     ss.users[user_id] = UserStorage::CipherSks(submission.0.cipher_text, submission.0.sks);
 
-    users[user_id].registration = Registration::CipherSubmitted;
+    users[user_id].status = UserStatus::CipherSubmitted;
     Json(ServerResponse::ok_user(user_id))
-}
-
-fn sum_fhe(a: &FheUint8, b: &FheUint8, c: &FheUint8, total: &FheUint8) -> FheUint8 {
-    &(&(a + b) + c) - total
 }
 
 /// The admin runs the fhe computation
@@ -275,53 +276,21 @@ async fn run(
 
     let mut server_key_shares = vec![];
     let mut ciphers = vec![];
-    for (user_id, _user) in users.iter().enumerate() {
+    for (user_id, user) in users.iter().enumerate() {
         if let Some((cipher, sks)) = ss.users[user_id].get_cipher_sks() {
             server_key_shares.push(sks.clone());
-            ciphers.push(cipher.clone());
+            ciphers.push((cipher.clone(), user.to_owned()));
             ss.users[user_id] = UserStorage::DecryptionShare(None);
         } else {
             *status.lock().await = ServerStatus::Waiting;
             return Json(ServerResponse::err_missing_submission(user_id));
         }
     }
-    // HACK to make sure that paremeters are set in each thread.
-    set_parameter_set(ParameterSelector::NonInteractiveLTE4Party);
-    println!("aggregate server key shares");
-    let now = std::time::Instant::now();
-    let server_key = aggregate_server_key_shares(server_key_shares.as_slice());
-    println!("server key aggregation time: {:?}", now.elapsed());
-    println!("set server key");
-    server_key.set_server_key();
+    // Long running, global variable change
+    derive_server_key(&server_key_shares);
 
-    println!("collect serialized cipher texts");
-
-    let encs = ciphers
-        .iter()
-        .map(|c| c.unseed::<Vec<Vec<u64>>>())
-        .collect_vec();
-    let mut outs = vec![];
-    for (my_id, me) in users.iter().enumerate() {
-        println!("Compute {}'s karma", me.name);
-        let my_scores_from_others = &encs
-            .iter()
-            .enumerate()
-            .map(|(other_id, enc)| enc.key_switch(other_id).extract_at(my_id))
-            .collect_vec();
-
-        let total = encs[my_id].key_switch(my_id).extract_at(3);
-
-        let now = std::time::Instant::now();
-        let ct_out = sum_fhe(
-            &my_scores_from_others[0],
-            &my_scores_from_others[1],
-            &my_scores_from_others[2],
-            &total,
-        );
-        println!("sum_fhe evaluation time: {:?}", now.elapsed());
-        outs.push(ct_out)
-    }
-    ss.fhe_outputs = outs;
+    // Long running
+    ss.fhe_outputs = evaluate_circuit(&ciphers);
 
     *status.lock().await = ServerStatus::CompletedFhe;
 
@@ -357,7 +326,7 @@ async fn submit_decryption_shares(
 
     let mut users = users.lock().await;
 
-    users[user_id].registration = Registration::DecryptionShareSubmitted;
+    users[user_id].status = UserStatus::DecryptionShareSubmitted;
     Json(ServerResponse::ok_user(user_id))
 }
 
@@ -385,8 +354,7 @@ pub fn setup(seed: &Seed) {
     set_common_reference_seed(*seed);
 }
 
-#[launch]
-pub fn rocket() -> _ {
+pub fn rocket() -> Rocket<Build> {
     let mut seed = [0u8; 32];
     thread_rng().fill_bytes(&mut seed);
 

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Error};
 use std::{collections::HashMap, iter::zip};
+use tabled::{settings::Style, Table};
 
 use clap::command;
 use itertools::Itertools;
@@ -32,7 +33,6 @@ enum State {
     EncryptedInput(EncryptedInput),
     CompletedRun(StateCompletedRun),
     DownloadedOutput(StateDownloadedOuput),
-    PublishedShares(StatePublishedShares),
     Decrypted(StateDecrypted),
 }
 
@@ -77,17 +77,6 @@ struct StateCompletedRun {
 }
 
 struct StateDownloadedOuput {
-    name: String,
-    client: WebClient,
-    ck: ClientKey,
-    user_id: usize,
-    names: Vec<String>,
-    scores: [u8; 4],
-    fhe_out: Vec<FheUint8>,
-    shares: DecryptionSharesMap,
-}
-
-struct StatePublishedShares {
     name: String,
     client: WebClient,
     ck: ClientKey,
@@ -145,10 +134,13 @@ async fn main() {
 async fn cmd_setup(name: &String, url: &String) -> Result<(ClientKey, usize, WebClient), Error> {
     let client = WebClient::new(url);
     let seed = client.get_seed().await?;
-    println!("Acquired seed {:?}", seed);
-    println!("Run setup");
+    println!(
+        "Acquired seed for commen reference string (CRS) 0x{}",
+        hex::encode(seed)
+    );
+    println!("Setup my CRS");
     setup(&seed);
-    println!("Gen client key");
+    println!("Generate my client key");
     let ck = gen_client_key();
     let reg = client.register(name).await?;
     println!(
@@ -160,11 +152,10 @@ async fn cmd_setup(name: &String, url: &String) -> Result<(ClientKey, usize, Web
 
 async fn cmd_get_names(client: &WebClient) -> Result<Vec<String>, Error> {
     let users = client.get_names().await?;
-    for user in &users {
-        println!("User {:?}", user);
-    }
-
     let names = users.iter().map(|reg| reg.name.to_string()).collect_vec();
+    let users = Table::new(users).with(Style::ascii_rounded()).to_string();
+    println!("{}", users);
+
     Ok(names)
 }
 
@@ -400,7 +391,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             },
             _ => Err((anyhow!("Expected state DownloadedOuput"), state)),
         }
-    } else if cmd.starts_with("#") {
+    } else if cmd.starts_with('#') {
         Ok(state)
     } else {
         Err((anyhow!("Unknown command {}", cmd), state))
