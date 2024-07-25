@@ -1,12 +1,11 @@
 use anyhow::{anyhow, Error};
-use std::{collections::HashMap, iter::zip};
-use tabled::{settings::Style, Table};
+use std::{collections::HashMap, fmt::Display, iter::zip};
+use tabled::{settings::Style, Table, Tabled};
 
 use clap::command;
 use itertools::Itertools;
 use karma_calculator::{
-    setup, Cipher, CipherSubmission, DecryptionShareSubmission, DecryptionSharesMap,
-    ServerKeyShare, WebClient, TOTAL_USERS,
+    setup, CipherSubmission, DecryptionShareSubmission, DecryptionSharesMap, WebClient, TOTAL_USERS,
 };
 
 use rustyline::{error::ReadlineError, DefaultEditor};
@@ -36,6 +35,50 @@ enum State {
     Decrypted(StateDecrypted),
 }
 
+impl Display for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            State::Init(_) => "Initialization",
+            State::Setup(_) => "Setup",
+            State::GotNames(_) => "Got Names",
+            State::EncryptedInput(_) => "Encrypted Input",
+            State::CompletedRun(_) => "Completed Run",
+            State::DownloadedOutput(_) => "Downloaded Output",
+            State::Decrypted(_) => "Decrypted",
+        };
+        write!(f, "<< {} >>", label)
+    }
+}
+
+impl State {
+    fn print_status_update(&self) {
+        let msg = match self {
+            State::Init(StateInit { name, url }) => {
+                format!("Hi {name}, we just connected to server {url}.")
+            }
+            State::Setup(StateSetup { .. }) => format!("✅ Setup completed!"),
+            State::GotNames(_) => format!("✅ Users' names acquired!"),
+            State::EncryptedInput(_) => format!("✅ Ciphertext submitted!"),
+
+            State::CompletedRun(_) => format!("✅ FHE run completed!"),
+            State::DownloadedOutput(_) => format!("✅ FHE output downloaded!"),
+            State::Decrypted(_) => format!("✅ FHE output decrypted!"),
+        };
+        println!("{}", msg)
+    }
+
+    fn print_instruction(&self) {
+        let msg = match self {
+            State::GotNames(_) => {
+                "Enter `next` with scores for each user to continue. Example: `next 1 2 3`"
+            }
+            State::Decrypted(_) => "Exit with `CTRL-D`",
+            _ => "Enter `next` to continue",
+        };
+        println!("👇 {}", msg)
+    }
+}
+
 struct StateInit {
     name: String,
     url: String,
@@ -62,9 +105,7 @@ struct EncryptedInput {
     ck: ClientKey,
     user_id: usize,
     names: Vec<String>,
-    scores: [u8; 4],
-    cipher: Cipher,
-    sks: ServerKeyShare,
+    scores: Vec<u8>,
 }
 
 struct StateCompletedRun {
@@ -73,24 +114,22 @@ struct StateCompletedRun {
     ck: ClientKey,
     user_id: usize,
     names: Vec<String>,
-    scores: [u8; 4],
+    scores: Vec<u8>,
 }
 
 struct StateDownloadedOuput {
     name: String,
     client: WebClient,
     ck: ClientKey,
-    user_id: usize,
     names: Vec<String>,
-    scores: [u8; 4],
+    scores: Vec<u8>,
     fhe_out: Vec<FheUint8>,
     shares: DecryptionSharesMap,
 }
 
 struct StateDecrypted {
     names: Vec<String>,
-    fhe_out: Vec<FheUint8>,
-    shares: DecryptionSharesMap,
+    scores: Vec<u8>,
     decrypted_output: Vec<u8>,
 }
 
@@ -102,18 +141,27 @@ async fn main() {
 
     let mut rl = DefaultEditor::new().unwrap();
     let mut state = State::Init(StateInit { name, url });
+    println!("{}", state);
+    state.print_status_update();
+    state.print_instruction();
     loop {
         let readline = rl.readline(">> ");
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str()).unwrap();
                 state = match run(state, line.as_str()).await {
-                    Ok(state) => state,
+                    Ok(state) => {
+                        println!("{}", state);
+                        state.print_status_update();
+                        state
+                    }
                     Err((err, state)) => {
-                        println!("Error: {:?}", err);
+                        println!("❌ Error: {:?}", err);
+                        println!("Fallback to {}", state);
                         state
                     }
                 };
+                state.print_instruction();
             }
             Err(ReadlineError::Interrupted) => {
                 println!("CTRL-C");
@@ -165,8 +213,8 @@ async fn cmd_score_encrypt(
     user_id: &usize,
     names: &Vec<String>,
     ck: &ClientKey,
-) -> Result<([u8; 4], Cipher, ServerKeyShare), Error> {
-    let score: Result<Vec<u8>, Error> = args
+) -> Result<Vec<u8>, Error> {
+    let scores: Result<Vec<u8>, Error> = args
         .iter()
         .map(|s| {
             s.parse::<u8>()
@@ -175,26 +223,25 @@ async fn cmd_score_encrypt(
         .collect_vec()
         .into_iter()
         .collect();
-    let score = score?;
-    let total = score[0..3].iter().sum();
-    let scores: [u8; 4] = [score[0], score[1], score[2], total];
-    for (name, score) in zip(names, score[0..3].iter()) {
+    let scores = scores?;
+    let total = scores.iter().sum();
+    for (name, score) in zip(names, scores.iter()) {
         println!("Give {name} {score} karma");
     }
     println!("I gave out {total} karma");
 
+    let mut plain_text = scores.to_vec();
+    plain_text.push(total);
+
     println!("Encrypting Inputs");
-    let cipher = ck.encrypt(scores.as_slice());
+    let cipher = ck.encrypt(plain_text.as_slice());
     println!("Generating server key share");
     let sks = gen_server_key_share(*user_id, TOTAL_USERS, ck);
 
     println!("Submit the cipher and the server key share");
     let submission = CipherSubmission::new(*user_id, cipher.clone(), sks.clone());
-    let response = client.submit_cipher(&submission).await?;
-    println!("{:?}", response);
-
-    let scores = [0u8; 4];
-    Ok((scores, cipher, sks))
+    client.submit_cipher(&submission).await?;
+    Ok(scores)
 }
 
 async fn cmd_run(client: &WebClient) -> Result<(), Error> {
@@ -233,22 +280,17 @@ async fn cmd_download_output(
 
 async fn cmd_download_shares(
     client: &WebClient,
-    user_id: &usize,
     names: &Vec<String>,
     ck: &ClientKey,
     shares: &mut HashMap<(usize, usize), Vec<u64>>,
     fhe_out: &Vec<FheUint8>,
+    scores: &[u8],
 ) -> Result<Vec<u8>, Error> {
     println!("Acquiring decryption shares needed");
     for (output_id, user_id) in (0..3).cartesian_product(0..3) {
         if shares.get(&(output_id, user_id)).is_none() {
-            println!("Acquiring user {user_id}'s decryption shares for output {output_id}");
             let ds = client.get_decryption_share(output_id, user_id).await?;
             shares.insert((output_id, user_id), ds);
-        } else {
-            println!(
-                "Already have user {user_id}'s decryption shares for output {output_id}, skip."
-            );
         }
     }
     println!("Decrypt the encrypted output");
@@ -268,10 +310,7 @@ async fn cmd_download_shares(
         })
         .collect_vec();
     println!("Final decrypted output:");
-    for (name, output) in zip(names, &decrypted_output) {
-        println!("\t{} has {} karma", name, output);
-    }
-
+    present_balance(names, scores, &decrypted_output);
     Ok(decrypted_output)
 }
 
@@ -282,7 +321,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
     }
     let cmd = &terms[0];
     let args = &terms[1..];
-    if cmd == &"setup" {
+    if cmd == &"next" {
         match state {
             State::Init(s) => match cmd_setup(&s.name, &s.url).await {
                 Ok((ck, user_id, client)) => Ok(State::Setup(StateSetup {
@@ -293,10 +332,6 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 })),
                 Err(err) => Err((err, State::Init(s))),
             },
-            _ => Err((anyhow!("Expected state Init"), state)),
-        }
-    } else if cmd == &"getNames" {
-        match state {
             State::Setup(s) => match cmd_get_names(&s.client).await {
                 Ok(names) => Ok(State::GotNames(StateGotNames {
                     name: s.name,
@@ -307,32 +342,19 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 })),
                 Err(err) => Err((err, State::Setup(s))),
             },
-            _ => Err((anyhow!("Expected state Setup"), state)),
-        }
-    } else if cmd == &"scoreEncrypt" {
-        if args.len() != 3 {
-            return Err((anyhow!("Invalid args: {:?}", args), state));
-        }
-        match state {
             State::GotNames(s) => {
                 match cmd_score_encrypt(args, &s.client, &s.user_id, &s.names, &s.ck).await {
-                    Ok((scores, cipher, sks)) => Ok(State::EncryptedInput(EncryptedInput {
+                    Ok(scores) => Ok(State::EncryptedInput(EncryptedInput {
                         name: s.name,
                         client: s.client,
                         ck: s.ck,
                         user_id: s.user_id,
                         names: s.names,
                         scores,
-                        cipher,
-                        sks,
                     })),
                     Err(err) => Err((err, State::GotNames(s))),
                 }
             }
-            _ => Err((anyhow!("Expected state GotNames"), state)),
-        }
-    } else if cmd == &"run" {
-        match state {
             State::EncryptedInput(s) => match cmd_run(&s.client).await {
                 Ok(()) => Ok(State::CompletedRun(StateCompletedRun {
                     name: s.name,
@@ -344,20 +366,12 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 })),
                 Err(err) => Err((err, State::EncryptedInput(s))),
             },
-            _ => Err((anyhow!("Expected state GotNames"), state)),
-        }
-    } else if cmd == &"downloadOutput" {
-        // - Download fhe output
-        // - Generate my decryption key shares
-        // - Upload my decryption key shares
-        match state {
             State::CompletedRun(s) => match cmd_download_output(&s.client, &s.user_id, &s.ck).await
             {
                 Ok((fhe_out, shares)) => Ok(State::DownloadedOutput(StateDownloadedOuput {
                     name: s.name,
                     client: s.client,
                     ck: s.ck,
-                    user_id: s.user_id,
                     names: s.names,
                     scores: s.scores,
                     fhe_out,
@@ -365,35 +379,58 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 })),
                 Err(err) => Err((err, State::CompletedRun(s))),
             },
-            _ => Err((anyhow!("Expected state EncryptedInput"), state)),
-        }
-    } else if cmd == &"downloadShares" {
-        // - Download others decryption key shares
-        // - Decrypt fhe output
-        match state {
-            State::DownloadedOutput(mut s) => match cmd_download_shares(
-                &s.client,
-                &s.user_id,
-                &s.names,
-                &s.ck,
-                &mut s.shares,
-                &s.fhe_out,
-            )
-            .await
-            {
-                Ok(decrypted_output) => Ok(State::Decrypted(StateDecrypted {
-                    names: s.names,
-                    fhe_out: s.fhe_out,
-                    shares: s.shares,
+            State::DownloadedOutput(mut s) => {
+                match cmd_download_shares(
+                    &s.client,
+                    &s.names,
+                    &s.ck,
+                    &mut s.shares,
+                    &s.fhe_out,
+                    &s.scores,
+                )
+                .await
+                {
+                    Ok(decrypted_output) => Ok(State::Decrypted(StateDecrypted {
+                        names: s.names,
+                        decrypted_output,
+                        scores: s.scores,
+                    })),
+                    Err(err) => Err((err, State::DownloadedOutput(s))),
+                }
+            }
+            State::Decrypted(StateDecrypted {
+                names,
+                decrypted_output,
+                scores,
+            }) => {
+                present_balance(&names, &scores, &decrypted_output);
+                Ok(State::Decrypted(StateDecrypted {
+                    names,
                     decrypted_output,
-                })),
-                Err(err) => Err((err, State::DownloadedOutput(s))),
-            },
-            _ => Err((anyhow!("Expected state DownloadedOuput"), state)),
+                    scores,
+                }))
+            }
         }
     } else if cmd.starts_with('#') {
         Ok(state)
     } else {
         Err((anyhow!("Unknown command {}", cmd), state))
     }
+}
+
+fn present_balance(names: &[String], scores: &[u8], final_balances: &[u8]) {
+    #[derive(Tabled)]
+    struct Row {
+        name: String,
+        karma_i_sent: u8,
+        decrypted_karma_balance: u8,
+    }
+    let table = zip(zip(names, scores), final_balances)
+        .map(|((name, &karma_i_sent), &decrypted_karma_balance)| Row {
+            name: name.to_string(),
+            karma_i_sent,
+            decrypted_karma_balance,
+        })
+        .collect_vec();
+    println!("{}", Table::new(table).with(Style::ascii_rounded()));
 }
