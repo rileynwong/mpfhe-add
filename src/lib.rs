@@ -1,15 +1,27 @@
+mod circuit;
 mod client;
 mod server;
 mod types;
-mod circuit;
 
 pub use client::WebClient;
-pub use server::{
-    rocket, setup, CipherSubmission, DecryptionShareSubmission, DecryptionSharesMap,
-    RegisteredUser, RegistrationOut, ServerResponse, TOTAL_USERS,
-};
+pub use server::{rocket, setup};
 
-pub use types::{Cipher, ClientKey, DecryptionShare, FheUint8, Seed, ServerKeyShare, UserId};
+pub use types::{
+    Cipher, ClientKey, DecryptionShare, DecryptionSharesMap, FheUint8, MutexServerStatus,
+    RegisteredUser, Seed, ServerKeyShare, ServerStatus, UserId,
+};
 
 #[cfg(test)]
 mod tests;
+
+/// Utility to time a long running function
+#[macro_export]
+macro_rules! time {
+    ($block:expr, $label:expr) => {{
+        let start = std::time::Instant::now();
+        print!("{}", $label);
+        let result = $block();
+        println!(" | elapsed: {:.2?}", start.elapsed());
+        result
+    }};
+}

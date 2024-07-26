@@ -1,19 +1,16 @@
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, ensure, Error};
 use std::{collections::HashMap, fmt::Display, iter::zip};
 use tabled::{settings::Style, Table, Tabled};
 
 use clap::command;
 use itertools::Itertools;
-use karma_calculator::{
-    setup, CipherSubmission, DecryptionShareSubmission, DecryptionSharesMap, WebClient, TOTAL_USERS,
-};
+use karma_calculator::{setup, DecryptionSharesMap, ServerStatus, WebClient};
 
 use rustyline::{error::ReadlineError, DefaultEditor};
 
 use phantom_zone::{
     gen_client_key, gen_server_key_share, ClientKey, Encryptor, FheUint8, MultiPartyDecryptor,
 };
-use tokio;
 
 use clap::Parser;
 
@@ -28,7 +25,7 @@ struct Cli2 {
 enum State {
     Init(StateInit),
     Setup(StateSetup),
-    GotNames(StateGotNames),
+    ConcludedRegistration(ConcludedRegistration),
     EncryptedInput(EncryptedInput),
     CompletedRun(StateCompletedRun),
     DownloadedOutput(StateDownloadedOuput),
@@ -40,13 +37,13 @@ impl Display for State {
         let label = match self {
             State::Init(_) => "Initialization",
             State::Setup(_) => "Setup",
-            State::GotNames(_) => "Got Names",
+            State::ConcludedRegistration(_) => "Concluded Registration",
             State::EncryptedInput(_) => "Encrypted Input",
             State::CompletedRun(_) => "Completed Run",
             State::DownloadedOutput(_) => "Downloaded Output",
             State::Decrypted(_) => "Decrypted",
         };
-        write!(f, "<< {} >>", label)
+        write!(f, "{{{{ {} }}}}", label)
     }
 }
 
@@ -56,20 +53,20 @@ impl State {
             State::Init(StateInit { name, url }) => {
                 format!("Hi {name}, we just connected to server {url}.")
             }
-            State::Setup(StateSetup { .. }) => format!("✅ Setup completed!"),
-            State::GotNames(_) => format!("✅ Users' names acquired!"),
-            State::EncryptedInput(_) => format!("✅ Ciphertext submitted!"),
-
-            State::CompletedRun(_) => format!("✅ FHE run completed!"),
-            State::DownloadedOutput(_) => format!("✅ FHE output downloaded!"),
-            State::Decrypted(_) => format!("✅ FHE output decrypted!"),
+            State::Setup(StateSetup { .. }) => "✅ Setup completed!".to_string(),
+            State::ConcludedRegistration(_) => "✅ Users' names acquired!".to_string(),
+            State::EncryptedInput(_) => "✅ Ciphertext submitted!".to_string(),
+            State::CompletedRun(_) => "✅ FHE run completed!".to_string(),
+            State::DownloadedOutput(_) => "✅ FHE output downloaded!".to_string(),
+            State::Decrypted(_) => "✅ FHE output decrypted!".to_string(),
         };
         println!("{}", msg)
     }
 
     fn print_instruction(&self) {
         let msg = match self {
-            State::GotNames(_) => {
+            State::Setup(_) => "Enter `conclude` to end registration or `next` to proceed",
+            State::ConcludedRegistration(_) => {
                 "Enter `next` with scores for each user to continue. Example: `next 1 2 3`"
             }
             State::Decrypted(_) => "Exit with `CTRL-D`",
@@ -91,7 +88,7 @@ struct StateSetup {
     user_id: usize,
 }
 
-struct StateGotNames {
+struct ConcludedRegistration {
     name: String,
     client: WebClient,
     ck: ClientKey,
@@ -179,7 +176,7 @@ async fn main() {
     }
 }
 
-async fn cmd_setup(name: &String, url: &String) -> Result<(ClientKey, usize, WebClient), Error> {
+async fn cmd_setup(name: &str, url: &str) -> Result<(ClientKey, usize, WebClient), Error> {
     let client = WebClient::new(url);
     let seed = client.get_seed().await?;
     println!(
@@ -190,21 +187,22 @@ async fn cmd_setup(name: &String, url: &String) -> Result<(ClientKey, usize, Web
     setup(&seed);
     println!("Generate my client key");
     let ck = gen_client_key();
-    let reg = client.register(name).await?;
-    println!(
-        "Hi {}, you are registered with ID: {}",
-        reg.name, reg.user_id
-    );
-    Ok((ck, reg.user_id, client))
+    let user = client.register(name).await?;
+    println!("Hi {}, you are registered with ID: {}", user.name, user.id);
+    Ok((ck, user.id, client))
 }
 
-async fn cmd_get_names(client: &WebClient) -> Result<Vec<String>, Error> {
-    let users = client.get_names().await?;
-    let names = users.iter().map(|reg| reg.name.to_string()).collect_vec();
-    let users = Table::new(users).with(Style::ascii_rounded()).to_string();
-    println!("{}", users);
+async fn cmd_get_names(client: &WebClient) -> Result<(bool, Vec<String>), Error> {
+    let dashboard = client.get_dashboard().await?;
+    let is_concluded = matches!(dashboard.status, ServerStatus::ReadyForInputs);
+    let names = dashboard.get_names();
+    dashboard.print_presentation();
+    Ok((is_concluded, names))
+}
 
-    Ok(names)
+async fn cmd_conclude_registration(client: &WebClient) -> Result<Vec<String>, Error> {
+    let dashboard = client.conclude_registration().await?;
+    Ok(dashboard.get_names())
 }
 
 async fn cmd_score_encrypt(
@@ -214,6 +212,7 @@ async fn cmd_score_encrypt(
     names: &Vec<String>,
     ck: &ClientKey,
 ) -> Result<Vec<u8>, Error> {
+    let total_users = names.len();
     let scores: Result<Vec<u8>, Error> = args
         .iter()
         .map(|s| {
@@ -224,6 +223,12 @@ async fn cmd_score_encrypt(
         .into_iter()
         .collect();
     let scores = scores?;
+    ensure!(
+        scores.len() == total_users,
+        "Mismatch scores and user number. Score: {}, users: {}",
+        scores.len(),
+        total_users
+    );
     let total = scores.iter().sum();
     for (name, score) in zip(names, scores.iter()) {
         println!("Give {name} {score} karma");
@@ -236,23 +241,18 @@ async fn cmd_score_encrypt(
     println!("Encrypting Inputs");
     let cipher = ck.encrypt(plain_text.as_slice());
     println!("Generating server key share");
-    let sks = gen_server_key_share(*user_id, TOTAL_USERS, ck);
+    let sks = gen_server_key_share(*user_id, total_users, ck);
 
     println!("Submit the cipher and the server key share");
-    let submission = CipherSubmission::new(*user_id, cipher.clone(), sks.clone());
-    client.submit_cipher(&submission).await?;
+    client.submit_cipher(*user_id, &cipher, &sks).await?;
     Ok(scores)
 }
 
 async fn cmd_run(client: &WebClient) -> Result<(), Error> {
     println!("Requesting FHE run ...");
     let resp = client.trigger_fhe_run().await?;
-    if resp.ok {
-        println!("Server: {}", resp.msg);
-        Ok(())
-    } else {
-        Err(anyhow!("Server: {}", resp.msg))
-    }
+    println!("Server: {}", resp);
+    Ok(())
 }
 
 async fn cmd_download_output(
@@ -271,23 +271,25 @@ async fn cmd_download_output(
         my_decryption_shares.push(share.clone());
         shares.insert((out_id, *user_id), share);
     }
-    let submission = DecryptionShareSubmission::new(*user_id, &my_decryption_shares);
 
     println!("Submitting my decrypting shares");
-    client.submit_decryption_shares(&submission).await?;
+    client
+        .submit_decryption_shares(*user_id, &my_decryption_shares)
+        .await?;
     Ok((fhe_out, shares))
 }
 
 async fn cmd_download_shares(
     client: &WebClient,
-    names: &Vec<String>,
+    names: &[String],
     ck: &ClientKey,
     shares: &mut HashMap<(usize, usize), Vec<u64>>,
-    fhe_out: &Vec<FheUint8>,
+    fhe_out: &[FheUint8],
     scores: &[u8],
 ) -> Result<Vec<u8>, Error> {
+    let total_users = names.len();
     println!("Acquiring decryption shares needed");
-    for (output_id, user_id) in (0..3).cartesian_product(0..3) {
+    for (output_id, user_id) in (0..total_users).cartesian_product(0..total_users) {
         if shares.get(&(output_id, user_id)).is_none() {
             let ds = client.get_decryption_share(output_id, user_id).await?;
             shares.insert((output_id, user_id), ds);
@@ -298,7 +300,7 @@ async fn cmd_download_shares(
         .iter()
         .enumerate()
         .map(|(output_id, output)| {
-            let decryption_shares = (0..TOTAL_USERS)
+            let decryption_shares = (0..total_users)
                 .map(|user_id| {
                     shares
                         .get(&(output_id, user_id))
@@ -316,7 +318,7 @@ async fn cmd_download_shares(
 
 async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
     let terms: Vec<&str> = line.split_whitespace().collect();
-    if terms.len() == 0 {
+    if terms.is_empty() {
         return Ok(state);
     }
     let cmd = &terms[0];
@@ -333,16 +335,22 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 Err(err) => Err((err, State::Init(s))),
             },
             State::Setup(s) => match cmd_get_names(&s.client).await {
-                Ok(names) => Ok(State::GotNames(StateGotNames {
-                    name: s.name,
-                    client: s.client,
-                    ck: s.ck,
-                    user_id: s.user_id,
-                    names,
-                })),
+                Ok((is_concluded, names)) => {
+                    if is_concluded {
+                        Ok(State::ConcludedRegistration(ConcludedRegistration {
+                            name: s.name,
+                            client: s.client,
+                            ck: s.ck,
+                            user_id: s.user_id,
+                            names,
+                        }))
+                    } else {
+                        Ok(State::Setup(s))
+                    }
+                }
                 Err(err) => Err((err, State::Setup(s))),
             },
-            State::GotNames(s) => {
+            State::ConcludedRegistration(s) => {
                 match cmd_score_encrypt(args, &s.client, &s.user_id, &s.names, &s.ck).await {
                     Ok(scores) => Ok(State::EncryptedInput(EncryptedInput {
                         name: s.name,
@@ -352,7 +360,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         names: s.names,
                         scores,
                     })),
-                    Err(err) => Err((err, State::GotNames(s))),
+                    Err(err) => Err((err, State::ConcludedRegistration(s))),
                 }
             }
             State::EncryptedInput(s) => match cmd_run(&s.client).await {
@@ -410,6 +418,20 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     scores,
                 }))
             }
+        }
+    } else if cmd == &"conclude" {
+        match state {
+            State::Setup(s) => match cmd_conclude_registration(&s.client).await {
+                Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names,
+                })),
+                Err(err) => Err((err, State::Setup(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
         }
     } else if cmd.starts_with('#') {
         Ok(state)
