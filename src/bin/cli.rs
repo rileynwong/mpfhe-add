@@ -66,8 +66,15 @@ impl State {
     fn print_instruction(&self) {
         let msg = match self {
             State::Setup(_) => "Enter `conclude` to end registration or `next` to proceed",
-            State::ConcludedRegistration(_) => {
-                "Enter `next` with scores for each user to continue. Example: `next 1 2 3`"
+            State::ConcludedRegistration(ConcludedRegistration { names, .. }) => {
+                let total_users = names.len();
+                &format!(
+                    "Enter `next` with scores for each user to continue. Example: `next {}`",
+                    (0..total_users)
+                        .map(|n| n.to_string())
+                        .collect::<Vec<String>>()
+                        .join(" ")
+                )
             }
             State::Decrypted(_) => "Exit with `CTRL-D`",
             _ => "Enter `next` to continue",
@@ -228,6 +235,11 @@ async fn cmd_score_encrypt(
         "Mismatch scores and user number. Score: {}, users: {}",
         scores.len(),
         total_users
+    );
+    ensure!(
+        scores.iter().all(|&x| x <= 127u8),
+        "All scores should be less or equal than 127. Scores: {:#?}",
+        scores,
     );
     let total = scores.iter().sum();
     for (name, score) in zip(names, scores.iter()) {
@@ -445,13 +457,13 @@ fn present_balance(names: &[String], scores: &[u8], final_balances: &[u8]) {
     struct Row {
         name: String,
         karma_i_sent: u8,
-        decrypted_karma_balance: u8,
+        decrypted_karma_balance: i8,
     }
     let table = zip(zip(names, scores), final_balances)
         .map(|((name, &karma_i_sent), &decrypted_karma_balance)| Row {
             name: name.to_string(),
             karma_i_sent,
-            decrypted_karma_balance,
+            decrypted_karma_balance: decrypted_karma_balance as i8,
         })
         .collect_vec();
     println!("{}", Table::new(table).with(Style::ascii_rounded()));
