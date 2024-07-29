@@ -3,13 +3,16 @@ use crate::types::{
     RegisteredUser, Seed, ServerKeyShare, UserId,
 };
 use anyhow::{anyhow, bail, Error};
-use reqwest::{
-    self,
-    header::{HeaderMap, HeaderValue, CONTENT_TYPE},
-    Client,
-};
+use indicatif::{ProgressBar, ProgressStyle};
+use reqwest::{self, header::CONTENT_TYPE, Client};
 use rocket::serde::msgpack;
 use serde::{Deserialize, Serialize};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+use tokio::io::AsyncRead;
+use tokio_util::io::ReaderStream;
 
 pub enum WebClient {
     Prod {
@@ -87,13 +90,14 @@ impl WebClient {
     ) -> Result<T, Error> {
         match self {
             WebClient::Prod { client, .. } => {
+                let body = msgpack::to_compact_vec(body)?;
+                let reader = ProgressReader::new(&body, 128);
+                let stream = ReaderStream::new(reader);
+
                 let response = client
                     .post(self.path(path))
-                    .headers(HeaderMap::from_iter([(
-                        CONTENT_TYPE,
-                        HeaderValue::from_static("application/msgpack"),
-                    )]))
-                    .body(msgpack::to_compact_vec(body)?)
+                    .header(CONTENT_TYPE, "application/msgpack")
+                    .body(reqwest::Body::wrap_stream(stream))
                     .send()
                     .await?;
                 handle_response_prod(response).await
@@ -192,5 +196,56 @@ async fn handle_response_test<T: Send + for<'de> Deserialize<'de> + 'static>(
                 .ok_or(anyhow!("Can't parse response output"))?;
             bail!("Server responded error: {:?}", err)
         }
+    }
+}
+
+struct ProgressReader {
+    inner: Vec<u8>,
+    progress_bar: ProgressBar,
+    position: usize,
+    chunk_size: usize,
+}
+
+impl ProgressReader {
+    fn new(body: &[u8], chunk_size: usize) -> Self {
+        let total_bytes = body.len() as u64;
+        println!("Total size {} B", total_bytes);
+        let bar = ProgressBar::new(total_bytes);
+        bar.set_style(
+            ProgressStyle::with_template(
+                "[{elapsed_precise}] {bar:40.cyan/blue} {percent}% {bytes_per_sec} {msg}",
+            )
+            .unwrap()
+            .progress_chars("##-"),
+        );
+        bar.set_message("Uploading...");
+
+        Self {
+            inner: body.to_vec(),
+            progress_bar: bar,
+            position: 0,
+            chunk_size,
+        }
+    }
+}
+
+impl AsyncRead for ProgressReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<tokio::io::Result<()>> {
+        let remaining = self.inner.len() - self.position;
+        let to_read = self.chunk_size.min(remaining.min(buf.remaining()));
+        let end = self.position + to_read;
+        buf.put_slice(&self.inner[self.position..end]);
+        self.position = end;
+        self.progress_bar.set_position(self.position as u64);
+
+        if to_read == 0 {
+            self.progress_bar.finish_with_message("Upload complete")
+        }
+
+        Poll::Ready(Ok(()))
     }
 }
