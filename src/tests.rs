@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::*;
 use anyhow::Error;
 use rocket::{
-    serde::{Deserialize, Serialize},
+    serde::{msgpack, Deserialize, Serialize},
     Build, Rocket,
 };
 
@@ -202,15 +202,21 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
         println!("{} submit key and cipher", user.name);
 
         let user_id = user.id.unwrap();
+        let cipher_text = user.cipher.as_ref().unwrap();
+        let sks = user.server_key.as_ref().unwrap();
+        if user_id == 0 {
+            let cipher_text = msgpack::to_vec(cipher_text).unwrap();
+            let sks = msgpack::to_vec(sks).unwrap();
+            println!("cipher_text size {}", cipher_text.len());
+            println!("sks size {}", sks.len());
+        }
         println!("Submit cipher and server key");
         client
-            .submit_cipher(
-                user_id,
-                &user.cipher.as_ref().unwrap(),
-                &user.server_key.as_ref().unwrap(),
-            )
+            .submit_cipher(user_id, &cipher_text, &sks)
             .await
             .unwrap();
+        // Drop here to save mem
+        user.server_key = None;
     }
 
     // Admin runs the FHE computation

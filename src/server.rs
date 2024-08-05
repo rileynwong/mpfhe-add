@@ -1,11 +1,11 @@
-use crate::circuit::{derive_server_key, evaluate_circuit};
+use crate::circuit::{derive_server_key, evaluate_circuit, PARAMETER};
 use crate::types::{
     CipherSubmission, Dashboard, DecryptionShareSubmission, Error, ErrorResponse,
     MutexServerStatus, MutexServerStorage, RegisteredUser, ServerStatus, ServerStorage, UserList,
     UserStatus, UserStorage, Users,
 };
 use crate::{DecryptionShare, Seed, UserId};
-use phantom_zone::{set_common_reference_seed, set_parameter_set, FheUint8, ParameterSelector};
+use phantom_zone::{set_common_reference_seed, set_parameter_set, FheUint8};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
 use rocket::serde::msgpack::MsgPack;
@@ -122,7 +122,7 @@ async fn run(
         }
     }
     let users = users.lock().await;
-    println!("checking if we have all user submissions");
+    println!("Checking if we have all user submissions");
     let mut ss = ss.lock().await;
 
     let mut server_key_shares = vec![];
@@ -137,6 +137,7 @@ async fn run(
             return Err(Error::CipherNotFound { user_id }.into());
         }
     }
+    println!("We have all submissions!");
 
     ss.fhe_outputs = task::spawn_blocking(move || {
         // Long running, global variable change
@@ -201,7 +202,7 @@ async fn get_decryption_share(
 }
 
 pub fn setup(seed: &Seed) {
-    set_parameter_set(ParameterSelector::NonInteractiveLTE8Party);
+    set_parameter_set(PARAMETER);
     set_common_reference_seed(*seed);
 }
 
