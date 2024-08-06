@@ -25,15 +25,12 @@ pub type ClientKey = phantom_zone::ClientKey;
 pub type UserId = usize;
 pub type FheUint8 = phantom_zone::FheUint8;
 
-pub type MutexServerStatus = Mutex<ServerStatus>;
+pub(crate) type MutexServerStatus = Mutex<ServerStatus>;
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
     #[error("Wrong server state: expect {expect} but got {got}")]
-    WrongServerState {
-        expect: ServerStatus,
-        got: ServerStatus,
-    },
+    WrongServerState { expect: String, got: String },
     #[error("User #{user_id} is unregistered")]
     UnregisteredUser { user_id: usize },
     #[error("The ciphertext from user #{user_id} not found")]
@@ -66,27 +63,28 @@ impl From<Error> for ErrorResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(crate = "rocket::serde")]
-pub enum ServerStatus {
+#[derive(Debug)]
+pub(crate) enum ServerStatus {
     /// Users are allowed to join the computation
     ReadyForJoining,
     /// The number of user is determined now.
     /// We can now accept ciphertexts, which depends on the number of users.
     ReadyForInputs,
     ReadyForRunning,
-    RunningFhe,
+    RunningFhe {
+        blocking_task: tokio::task::JoinHandle<Vec<FheUint8>>,
+    },
     CompletedFhe,
 }
 
 impl ServerStatus {
     pub(crate) fn ensure(&self, expect: Self) -> Result<&Self, Error> {
-        if self == &expect {
+        if self.to_string() == expect.to_string() {
             Ok(self)
         } else {
             Err(Error::WrongServerState {
-                expect,
-                got: self.clone(),
+                expect: expect.to_string(),
+                got: self.to_string(),
             })
         }
     }
@@ -185,13 +183,13 @@ pub(crate) type Users<'r> = &'r State<UserList>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Dashboard {
-    pub status: ServerStatus,
-    pub users: Vec<RegisteredUser>,
+    status: String,
+    users: Vec<RegisteredUser>,
 }
 impl Dashboard {
     pub(crate) fn new(status: &ServerStatus, users: &[RegisteredUser]) -> Self {
         Self {
-            status: status.clone(),
+            status: status.to_string(),
             users: users.to_vec(),
         }
     }
@@ -201,6 +199,15 @@ impl Dashboard {
             .iter()
             .map(|reg| reg.name.to_string())
             .collect_vec()
+    }
+
+    /// An API for client to check server state
+    pub fn is_concluded(&self) -> bool {
+        self.status == ServerStatus::ReadyForInputs.to_string()
+    }
+
+    pub fn is_fhe_complete(&self) -> bool {
+        self.status == ServerStatus::CompletedFhe.to_string()
     }
 
     pub fn print_presentation(&self) {

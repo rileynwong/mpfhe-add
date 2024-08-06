@@ -1,59 +1,61 @@
 use itertools::Itertools;
 use phantom_zone::{
-    aggregate_server_key_shares, set_parameter_set, KeySwitchWithId, ParameterSelector,
-    SampleExtractor,
+    aggregate_server_key_shares, KeySwitchWithId, ParameterSelector, SampleExtractor,
 };
+use rayon::prelude::*;
 
-use crate::{time, Cipher, FheUint8, RegisteredUser, ServerKeyShare};
+use crate::{time, Cipher, FheUint8, ServerKeyShare};
 
 pub const PARAMETER: ParameterSelector = ParameterSelector::NonInteractiveLTE40PartyExperimental;
 
 /// Circuit
-pub(crate) fn sum_fhe_dyn(receving_karmas: &[FheUint8], given_out: &FheUint8) -> FheUint8 {
-    let sum: FheUint8 = receving_karmas
-        .iter()
+pub(crate) fn sum_fhe_dyn(input: &[FheUint8]) -> FheUint8 {
+    let sum = input
+        .par_iter()
         .cloned()
-        .reduce(|a, b| &a + &b)
-        .expect("At least one input is received");
-    &sum - given_out
+        .reduce_with(|a, b| &a + &b)
+        .expect("Not None");
+    sum
 }
 
 /// Server work
 /// Warning: global variable change
 pub(crate) fn derive_server_key(server_key_shares: &[ServerKeyShare]) {
-    // HACK to make sure that paremeters are set in each thread.
-    set_parameter_set(PARAMETER);
     let server_key = time!(
         || aggregate_server_key_shares(server_key_shares),
         "Aggregate server key shares"
     );
-    println!("set server key");
     server_key.set_server_key();
 }
 
 /// Server work
-pub(crate) fn evaluate_circuit(users: &[(Cipher, RegisteredUser)]) -> Vec<FheUint8> {
-    // Unseed ciphers
-    let ciphers = users
+pub(crate) fn evaluate_circuit(ciphers: &[Cipher]) -> Vec<FheUint8> {
+    // Preprocess ciphers
+    // 1. Decompression: A cipher is a matrix generated from a seed. The seed is sent through the network as a compression. By calling the `unseed` method we recovered the matrix here.
+    // 2. Key Switch: We reencrypt the cipher with the server key for the computation. We need to specify the original signer of the cipher.
+    // 3. Extract: A user's encrypted inputs are packed in `BatchedFheUint8` struct. We call `extract_all` method to convert it to `Vec<FheUint8>` for easier manipulation.
+    let ciphers = ciphers
         .iter()
-        .map(|u| u.0.unseed::<Vec<Vec<u64>>>())
+        .enumerate()
+        .map(|(user_id, cipher)| {
+            cipher
+                .unseed::<Vec<Vec<u64>>>()
+                .key_switch(user_id)
+                .extract_all()
+        })
         .collect_vec();
 
-    let total_users = users.len();
-
     let mut outs = vec![];
-    for (my_id, (_, me)) in users.iter().enumerate() {
-        println!("Compute user {}'s karma", me.name);
-        let my_scores_from_others = &ciphers
-            .iter()
-            .enumerate()
-            .map(|(other_id, enc)| enc.key_switch(other_id).extract_at(my_id))
-            .collect_vec();
 
-        let total = ciphers[my_id].key_switch(my_id).extract_at(total_users);
-
-        let ct_out = time!(|| sum_fhe_dyn(my_scores_from_others, &total), "FHE Sum");
-        outs.push(ct_out)
-    }
+    ciphers
+        .par_iter()
+        .enumerate()
+        .map(|(my_id, my_ciphers)| {
+            let sent = sum_fhe_dyn(my_ciphers);
+            let received = ciphers.iter().map(|enc| enc[my_id].clone()).collect_vec();
+            let received = sum_fhe_dyn(&received);
+            &received - &sent
+        })
+        .collect_into_vec(&mut outs);
     outs
 }

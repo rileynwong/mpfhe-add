@@ -1,17 +1,18 @@
+use std::ops::DerefMut;
+
 use crate::circuit::{derive_server_key, evaluate_circuit, PARAMETER};
 use crate::types::{
     CipherSubmission, Dashboard, DecryptionShareSubmission, Error, ErrorResponse,
     MutexServerStatus, MutexServerStorage, RegisteredUser, ServerStatus, ServerStorage, UserList,
     UserStatus, UserStorage, Users,
 };
-use crate::{DecryptionShare, Seed, UserId};
+use crate::{time, DecryptionShare, Seed, UserId};
 use phantom_zone::{set_common_reference_seed, set_parameter_set, FheUint8};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
 use rocket::serde::msgpack::MsgPack;
 use rocket::{get, post, routes};
 use rocket::{Build, Rocket, State};
-use tokio::task;
 
 #[get("/param")]
 async fn get_param(ss: &State<MutexServerStorage>) -> Json<Seed> {
@@ -103,54 +104,78 @@ async fn run(
     ss: &State<MutexServerStorage>,
     status: &State<MutexServerStatus>,
 ) -> Result<Json<String>, ErrorResponse> {
-    {
-        let mut s = status.lock().await;
-        match *s {
-            ServerStatus::ReadyForRunning => {
-                s.transit(ServerStatus::RunningFhe);
-            }
-            ServerStatus::CompletedFhe => {
-                return Ok(Json("FHE already complete".to_string()));
-            }
-            _ => {
-                return Err(Error::WrongServerState {
-                    expect: ServerStatus::ReadyForRunning,
-                    got: s.clone(),
+    let mut s = status.lock().await;
+    // Hack: fix ownership problem
+    let prev_s = std::mem::replace(s.deref_mut(), ServerStatus::ReadyForJoining);
+    match prev_s {
+        ServerStatus::ReadyForRunning => {
+            let users = users.lock().await;
+            println!("Checking if we have all user submissions");
+            let mut ss = ss.lock().await;
+
+            let mut server_key_shares = vec![];
+            let mut ciphers = vec![];
+            for (user_id, user) in ss.users.iter_mut().enumerate() {
+                if let Some((cipher, sks)) = user.get_cipher_sks() {
+                    server_key_shares.push(sks.clone());
+                    ciphers.push(cipher.clone());
+                    *user = UserStorage::DecryptionShare(None);
+                } else {
+                    s.transit(ServerStatus::ReadyForInputs);
+                    return Err(Error::CipherNotFound { user_id }.into());
                 }
-                .into())
+            }
+            drop(users);
+            println!("We have all submissions!");
+            let blocking_task = tokio::task::spawn_blocking(move || {
+                rayon::ThreadPoolBuilder::new()
+                    .build_scoped(
+                        // Initialize thread-local storage parameters
+                        |thread| {
+                            set_parameter_set(PARAMETER);
+                            thread.run()
+                        },
+                        // Run parallel code under this pool
+                        |pool| {
+                            pool.install(|| {
+                                // Long running, global variable change
+                                derive_server_key(&server_key_shares);
+                                // Long running
+                                time!(|| evaluate_circuit(&ciphers), "Evaluating Circuit")
+                            })
+                        },
+                    )
+                    .unwrap()
+            });
+            s.transit(ServerStatus::RunningFhe { blocking_task });
+            Ok(Json("Awesome".to_string()))
+        }
+        ServerStatus::RunningFhe { blocking_task } => {
+            if blocking_task.is_finished() {
+                s.transit(ServerStatus::CompletedFhe);
+                let mut ss = ss.lock().await;
+                ss.fhe_outputs = blocking_task.await.unwrap();
+
+                println!("FHE computation completed");
+                Ok(Json("FHE complete".to_string()))
+            } else {
+                s.transit(ServerStatus::RunningFhe { blocking_task });
+                Ok(Json("FHE is still running".to_string()))
             }
         }
-    }
-    let users = users.lock().await;
-    println!("Checking if we have all user submissions");
-    let mut ss = ss.lock().await;
-
-    let mut server_key_shares = vec![];
-    let mut ciphers = vec![];
-    for (user_id, user) in users.iter().enumerate() {
-        if let Some((cipher, sks)) = ss.users[user_id].get_cipher_sks() {
-            server_key_shares.push(sks.clone());
-            ciphers.push((cipher.clone(), user.to_owned()));
-            ss.users[user_id] = UserStorage::DecryptionShare(None);
-        } else {
-            status.lock().await.transit(ServerStatus::ReadyForInputs);
-            return Err(Error::CipherNotFound { user_id }.into());
+        ServerStatus::CompletedFhe => {
+            s.transit(prev_s);
+            Ok(Json("FHE already complete".to_string()))
+        }
+        _ => {
+            s.transit(prev_s);
+            Err(Error::WrongServerState {
+                expect: ServerStatus::ReadyForRunning.to_string(),
+                got: s.to_string(),
+            }
+            .into())
         }
     }
-    println!("We have all submissions!");
-
-    ss.fhe_outputs = task::spawn_blocking(move || {
-        // Long running, global variable change
-        derive_server_key(&server_key_shares);
-        // Long running
-        evaluate_circuit(&ciphers)
-    })
-    .await
-    .map_err(|err| ErrorResponse::ServerError(err.to_string()))?;
-
-    status.lock().await.transit(ServerStatus::CompletedFhe);
-
-    Ok(Json("FHE complete".to_string()))
 }
 
 #[get("/fhe_output")]

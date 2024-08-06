@@ -1,9 +1,15 @@
+use circuit::PARAMETER;
 use itertools::Itertools;
-use phantom_zone::{gen_client_key, gen_server_key_share, Encryptor, MultiPartyDecryptor};
-use std::collections::HashMap;
+use phantom_zone::{
+    gen_client_key, gen_server_key_share, set_parameter_set, Encryptor, MultiPartyDecryptor,
+};
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
+use std::{collections::HashMap, time::Duration};
+use tokio::time::sleep;
 
 use crate::*;
 use anyhow::Error;
+use futures::future::join_all;
 use rocket::{
     serde::{msgpack, Deserialize, Serialize},
     Build, Rocket,
@@ -67,11 +73,7 @@ impl User {
         self
     }
     fn assign_scores(&mut self, scores: &[u8]) -> &mut Self {
-        let mut scores = scores.to_vec();
-        let total: u8 = scores.iter().sum();
-        scores.push(total);
-
-        self.scores = Some(scores);
+        self.scores = Some(scores.to_vec());
         self
     }
 
@@ -181,7 +183,7 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
 
     for user in users.iter_mut() {
         let dashboard = client.get_dashboard().await.unwrap();
-        user.set_total_users(dashboard.users.len());
+        user.set_total_users(dashboard.get_names().len());
     }
 
     // Assign scores
@@ -190,7 +192,18 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
         user.assign_scores(&scores);
     }
 
-    for user in users.iter_mut() {
+    let mut correct_output = vec![];
+    for (my_id, me) in users.iter().enumerate() {
+        let given_out = me.scores.as_ref().unwrap().iter().sum::<u8>();
+        let mut received = 0u8;
+        for other in users.iter() {
+            received += other.scores.as_ref().unwrap()[my_id];
+        }
+        correct_output.push(received - given_out)
+    }
+
+    users.par_iter_mut().for_each(|user| {
+        set_parameter_set(PARAMETER);
         println!("{} Gen cipher", user.name);
         user.gen_cipher();
         time!(
@@ -200,7 +213,9 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
             format!("{} Gen server key share", user.name)
         );
         println!("{} submit key and cipher", user.name);
+    });
 
+    async fn submit_cipher(client: &WebClient, user: &mut User) {
         let user_id = user.id.unwrap();
         let cipher_text = user.cipher.as_ref().unwrap();
         let sks = user.server_key.as_ref().unwrap();
@@ -218,9 +233,14 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
         // Drop here to save mem
         user.server_key = None;
     }
+    // Submit cipher in concurrent
+    join_all(users.iter_mut().map(|user| submit_cipher(&client, user))).await;
 
     // Admin runs the FHE computation
     client.trigger_fhe_run().await.unwrap();
+    while client.trigger_fhe_run().await.unwrap() != "FHE already complete" {
+        sleep(Duration::from_secs(1)).await
+    }
 
     // Users get FHE output, generate decryption shares, and submit decryption shares
     for user in users.iter_mut() {
@@ -251,6 +271,7 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
     for user in users {
         let decrypted_outs = user.decrypt_everything();
         println!("{} sees {:?}", user.name, decrypted_outs);
+        assert_eq!(decrypted_outs, correct_output);
     }
     Ok(())
 }
