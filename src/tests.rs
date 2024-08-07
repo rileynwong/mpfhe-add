@@ -6,6 +6,7 @@ use phantom_zone::{
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use std::{collections::HashMap, time::Duration};
 use tokio::time::sleep;
+use types::ServerState;
 
 use crate::*;
 use anyhow::Error;
@@ -199,7 +200,7 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
         for other in users.iter() {
             received += other.scores.as_ref().unwrap()[my_id];
         }
-        correct_output.push(received - given_out)
+        correct_output.push(received.wrapping_sub(given_out))
     }
 
     users.par_iter_mut().for_each(|user| {
@@ -238,7 +239,7 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
 
     // Admin runs the FHE computation
     client.trigger_fhe_run().await.unwrap();
-    while client.trigger_fhe_run().await.unwrap() != "FHE already complete" {
+    while client.trigger_fhe_run().await.unwrap() != ServerState::CompletedFhe {
         sleep(Duration::from_secs(1)).await
     }
 

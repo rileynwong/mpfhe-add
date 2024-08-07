@@ -1,5 +1,6 @@
 mod circuit;
 mod client;
+mod dashboard;
 mod server;
 mod types;
 
@@ -7,8 +8,8 @@ pub use client::WebClient;
 pub use server::{rocket, setup};
 
 pub use types::{
-    Cipher, ClientKey, DecryptionShare, DecryptionSharesMap, FheUint8, RegisteredUser, Seed,
-    ServerKeyShare, UserId,
+    Cipher, ClientKey, DecryptionShare, DecryptionSharesMap, FheUint8, Seed, ServerKeyShare,
+    ServerState, UserId,
 };
 
 #[cfg(test)]

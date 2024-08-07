@@ -1,6 +1,7 @@
+use crate::dashboard::{Dashboard, RegisteredUser};
 use crate::types::{
-    Cipher, CipherSubmission, Dashboard, DecryptionShare, DecryptionShareSubmission, FheUint8,
-    RegisteredUser, Seed, ServerKeyShare, UserId,
+    Cipher, CipherSubmission, DecryptionShare, DecryptionShareSubmission, FheUint8, Seed,
+    ServerKeyShare, ServerState, UserId,
 };
 use anyhow::{anyhow, bail, Error};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -98,7 +99,7 @@ impl WebClient {
         match self {
             WebClient::Prod { client, .. } => {
                 let body = msgpack::to_compact_vec(body)?;
-                let reader = ProgressReader::new(&body, 128);
+                let reader = ProgressReader::new(&body, 128 * 1024);
                 let stream = ReaderStream::new(reader);
 
                 let response = client
@@ -145,7 +146,7 @@ impl WebClient {
         self.post_msgpack("/submit", &submission).await
     }
 
-    pub async fn trigger_fhe_run(&self) -> Result<String, Error> {
+    pub async fn trigger_fhe_run(&self) -> Result<ServerState, Error> {
         self.post_nobody("/run").await
     }
 

@@ -1,10 +1,8 @@
-use std::ops::DerefMut;
-
 use crate::circuit::{derive_server_key, evaluate_circuit, PARAMETER};
+use crate::dashboard::{Dashboard, RegisteredUser};
 use crate::types::{
-    CipherSubmission, Dashboard, DecryptionShareSubmission, Error, ErrorResponse,
-    MutexServerStatus, MutexServerStorage, RegisteredUser, ServerStatus, ServerStorage, UserList,
-    UserStatus, UserStorage, Users,
+    CipherSubmission, DecryptionShareSubmission, Error, ErrorResponse, MutexServerStorage,
+    ServerState, ServerStorage, UserStorage,
 };
 use crate::{time, DecryptionShare, Seed, UserId};
 use phantom_zone::{set_common_reference_seed, set_parameter_set, FheUint8};
@@ -13,6 +11,7 @@ use rocket::serde::json::Json;
 use rocket::serde::msgpack::MsgPack;
 use rocket::{get, post, routes};
 use rocket::{Build, Rocket, State};
+use tokio::sync::Mutex;
 
 #[get("/param")]
 async fn get_param(ss: &State<MutexServerStorage>) -> Json<Seed> {
@@ -24,39 +23,31 @@ async fn get_param(ss: &State<MutexServerStorage>) -> Json<Seed> {
 #[post("/register", data = "<name>")]
 async fn register(
     name: &str,
-    users: Users<'_>,
-    status: &State<MutexServerStatus>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<RegisteredUser>, ErrorResponse> {
-    let s = status.lock().await;
-    s.ensure(ServerStatus::ReadyForJoining)?;
-    let mut users = users.lock().await;
-    let user_id = users.len();
-    let user = RegisteredUser::new(user_id, name);
-    users.push(user.clone());
     let mut ss = ss.lock().await;
-    ss.users.push(UserStorage::Empty);
+    ss.ensure(ServerState::ReadyForJoining)?;
+    let user = ss.add_user(name);
+    println!("{name} just joined!");
+
     Ok(Json(user))
 }
 
 #[post("/conclude_registration")]
 async fn conclude_registration(
-    users: Users<'_>,
-    status: &State<MutexServerStatus>,
+    ss: &State<MutexServerStorage>,
 ) -> Result<Json<Dashboard>, ErrorResponse> {
-    let mut s = status.lock().await;
-    s.ensure(ServerStatus::ReadyForJoining)?;
-    s.transit(ServerStatus::ReadyForInputs);
-    let users = users.lock().await;
-    let dashboard = Dashboard::new(&s, &users);
+    let mut ss = ss.lock().await;
+    ss.ensure(ServerState::ReadyForJoining)?;
+    ss.transit(ServerState::ReadyForInputs);
+    println!("Registration closed!");
+    let dashboard = ss.get_dashboard();
     Ok(Json(dashboard))
 }
 
 #[get("/dashboard")]
-async fn get_dashboard(users: Users<'_>, status: &State<MutexServerStatus>) -> Json<Dashboard> {
-    let s = status.lock().await;
-    let users = users.lock().await;
-    let dashboard = Dashboard::new(&s, &users);
+async fn get_dashboard(ss: &State<MutexServerStorage>) -> Json<Dashboard> {
+    let dashboard = ss.lock().await.get_dashboard();
     Json(dashboard)
 }
 
@@ -64,13 +55,11 @@ async fn get_dashboard(users: Users<'_>, status: &State<MutexServerStatus>) -> J
 #[post("/submit", data = "<submission>", format = "msgpack")]
 async fn submit(
     submission: MsgPack<CipherSubmission>,
-    users: Users<'_>,
-    status: &State<MutexServerStatus>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
-    {
-        status.lock().await.ensure(ServerStatus::ReadyForInputs)?;
-    }
+    let mut ss = ss.lock().await;
+
+    ss.ensure(ServerState::ReadyForInputs)?;
 
     let CipherSubmission {
         user_id,
@@ -78,20 +67,12 @@ async fn submit(
         sks,
     } = submission.0;
 
-    let mut users = users.lock().await;
-    if users.len() <= user_id {
-        return Err(Error::UnregisteredUser { user_id }.into());
-    }
-    let mut ss = ss.lock().await;
-    println!("{} Submited data", users[user_id].name);
-    ss.users[user_id] = UserStorage::CipherSks(cipher_text, Box::new(sks));
-    users[user_id].status = UserStatus::CipherSubmitted;
+    let user = ss.get_user(user_id)?;
+    println!("{} submited data", user.name);
+    user.storage = UserStorage::CipherSks(cipher_text, Box::new(sks));
 
-    if users
-        .iter()
-        .all(|user| matches!(user.status, UserStatus::CipherSubmitted))
-    {
-        status.lock().await.transit(ServerStatus::ReadyForRunning);
+    if ss.check_cipher_submission() {
+        ss.transit(ServerState::ReadyForRunning);
     }
 
     Ok(Json(user_id))
@@ -99,35 +80,15 @@ async fn submit(
 
 /// The admin runs the fhe computation
 #[post("/run")]
-async fn run(
-    users: Users<'_>,
-    ss: &State<MutexServerStorage>,
-    status: &State<MutexServerStatus>,
-) -> Result<Json<String>, ErrorResponse> {
-    let mut s = status.lock().await;
-    // Hack: fix ownership problem
-    let prev_s = std::mem::replace(s.deref_mut(), ServerStatus::ReadyForJoining);
-    match prev_s {
-        ServerStatus::ReadyForRunning => {
-            let users = users.lock().await;
-            println!("Checking if we have all user submissions");
-            let mut ss = ss.lock().await;
+async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorResponse> {
+    let s2 = (*ss).clone();
+    let mut ss = ss.lock().await;
 
-            let mut server_key_shares = vec![];
-            let mut ciphers = vec![];
-            for (user_id, user) in ss.users.iter_mut().enumerate() {
-                if let Some((cipher, sks)) = user.get_cipher_sks() {
-                    server_key_shares.push(sks.clone());
-                    ciphers.push(cipher.clone());
-                    *user = UserStorage::DecryptionShare(None);
-                } else {
-                    s.transit(ServerStatus::ReadyForInputs);
-                    return Err(Error::CipherNotFound { user_id }.into());
-                }
-            }
-            drop(users);
-            println!("We have all submissions!");
-            let blocking_task = tokio::task::spawn_blocking(move || {
+    match &ss.state {
+        ServerState::ReadyForRunning => {
+            let (server_key_shares, ciphers) = ss.get_ciphers_and_sks()?;
+
+            tokio::task::spawn_blocking(move || {
                 rayon::ThreadPoolBuilder::new()
                     .build_scoped(
                         // Initialize thread-local storage parameters
@@ -138,54 +99,41 @@ async fn run(
                         // Run parallel code under this pool
                         |pool| {
                             pool.install(|| {
+                                println!("Begin FHE run");
                                 // Long running, global variable change
                                 derive_server_key(&server_key_shares);
                                 // Long running
-                                time!(|| evaluate_circuit(&ciphers), "Evaluating Circuit")
+                                let output =
+                                    time!(|| evaluate_circuit(&ciphers), "Evaluating Circuit");
+                                let mut ss = s2.blocking_lock();
+                                ss.fhe_outputs = output;
+                                ss.transit(ServerState::CompletedFhe);
+                                println!("FHE computation completed");
                             })
                         },
                     )
-                    .unwrap()
+                    .unwrap();
             });
-            s.transit(ServerStatus::RunningFhe { blocking_task });
-            Ok(Json("Awesome".to_string()))
+            ss.transit(ServerState::RunningFhe);
+            Ok(Json(ServerState::RunningFhe))
         }
-        ServerStatus::RunningFhe { blocking_task } => {
-            if blocking_task.is_finished() {
-                s.transit(ServerStatus::CompletedFhe);
-                let mut ss = ss.lock().await;
-                ss.fhe_outputs = blocking_task.await.unwrap();
-
-                println!("FHE computation completed");
-                Ok(Json("FHE complete".to_string()))
-            } else {
-                s.transit(ServerStatus::RunningFhe { blocking_task });
-                Ok(Json("FHE is still running".to_string()))
-            }
+        ServerState::RunningFhe => Ok(Json(ServerState::RunningFhe)),
+        ServerState::CompletedFhe => Ok(Json(ServerState::CompletedFhe)),
+        _ => Err(Error::WrongServerState {
+            expect: ServerState::ReadyForRunning.to_string(),
+            got: ss.state.to_string(),
         }
-        ServerStatus::CompletedFhe => {
-            s.transit(prev_s);
-            Ok(Json("FHE already complete".to_string()))
-        }
-        _ => {
-            s.transit(prev_s);
-            Err(Error::WrongServerState {
-                expect: ServerStatus::ReadyForRunning.to_string(),
-                got: s.to_string(),
-            }
-            .into())
-        }
+        .into()),
     }
 }
 
 #[get("/fhe_output")]
 async fn get_fhe_output(
     ss: &State<MutexServerStorage>,
-    status: &State<MutexServerStatus>,
 ) -> Result<Json<Vec<FheUint8>>, ErrorResponse> {
-    status.lock().await.ensure(ServerStatus::CompletedFhe)?;
-    let fhe_outputs = &ss.lock().await.fhe_outputs;
-    Ok(Json(fhe_outputs.to_vec()))
+    let ss = ss.lock().await;
+    ss.ensure(ServerState::CompletedFhe)?;
+    Ok(Json(ss.fhe_outputs.to_vec()))
 }
 
 /// The user submits the ciphertext
@@ -193,18 +141,15 @@ async fn get_fhe_output(
 async fn submit_decryption_shares(
     submission: MsgPack<DecryptionShareSubmission>,
     ss: &State<MutexServerStorage>,
-    users: Users<'_>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let user_id = submission.user_id;
     let mut ss = ss.lock().await;
-    let decryption_shares = ss.users[user_id]
+    let decryption_shares = ss
+        .get_user(user_id)?
+        .storage
         .get_mut_decryption_shares()
         .ok_or(Error::OutputNotReady)?;
     *decryption_shares = Some(submission.decryption_shares.to_vec());
-
-    let mut users = users.lock().await;
-
-    users[user_id].status = UserStatus::DecryptionShareSubmitted;
     Ok(Json(user_id))
 }
 
@@ -215,7 +160,9 @@ async fn get_decryption_share(
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<DecryptionShare>, ErrorResponse> {
     let mut ss: tokio::sync::MutexGuard<ServerStorage> = ss.lock().await;
-    let decryption_shares = ss.users[user_id]
+    let decryption_shares = ss
+        .get_user(user_id)?
+        .storage
         .get_mut_decryption_shares()
         .cloned()
         .ok_or(Error::OutputNotReady)?
@@ -237,9 +184,9 @@ pub fn rocket() -> Rocket<Build> {
     setup(&seed);
 
     rocket::build()
-        .manage(UserList::new(vec![]))
-        .manage(MutexServerStorage::new(ServerStorage::new(seed)))
-        .manage(MutexServerStatus::new(ServerStatus::ReadyForJoining))
+        .manage(MutexServerStorage::new(Mutex::new(ServerStorage::new(
+            seed,
+        ))))
         .mount(
             "/",
             routes![
