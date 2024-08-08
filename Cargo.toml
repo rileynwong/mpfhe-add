@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-phantom-zone = { git = "https://github.com/veronicaz41/phantom-zone", rev = "fccf12bd3e9e2bc7fb616d51929268993147afe1", features = [
+phantom-zone = { git = "https://github.com/ChihChengLiang/phantom-zone", rev = "7645ad5b8a329429f44feb2485b0715aad86dab1", features = [
     "non_interactive_mp",
 ] }
 rand = "0.8.5"

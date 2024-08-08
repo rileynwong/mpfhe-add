@@ -215,8 +215,7 @@ async fn cmd_get_names(client: &WebClient) -> Result<(bool, Vec<String>), Error>
 }
 
 async fn cmd_conclude_registration(client: &WebClient) -> Result<Vec<String>, Error> {
-    let dashboard = client.conclude_registration().await?;
-    Ok(dashboard.get_names())
+    todo!()
 }
 
 async fn cmd_score_encrypt(
@@ -261,7 +260,7 @@ async fn cmd_score_encrypt(
     let sks = gen_server_key_share(*user_id, total_users, ck);
 
     println!("Submit the cipher and the server key share");
-    client.submit_cipher(*user_id, &ei, &sks).await?;
+    // client.submit_cipher(*user_id, &ei, &sks).await?;
     Ok(scores)
 }
 

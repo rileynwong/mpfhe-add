@@ -131,55 +131,55 @@ impl WebClient {
         self.get("/dashboard").await
     }
 
-    // This function can only be called by user 0
-    pub async fn init_game(&self, initial_eggs: &Cipher) -> Result<UserId, Error> {
-        let submission = InitGameRequest {
-            initial_eggs: cipher_text.clone(),
-        };
-        self.post_msgpack("/init_game", &submission).await
-    }
+    // // This function can only be called by user 0
+    // pub async fn init_game(&self, initial_eggs: &Cipher) -> Result<UserId, Error> {
+    //     let submission = InitGameRequest {
+    //         initial_eggs: cipher_text.clone(),
+    //     };
+    //     self.post_msgpack("/init_game", &submission).await
+    // }
 
-    pub async fn set_starting_coords(
-        &self,
-        user_id: usize,
-        starting_coords: &Cipher,
-        sks: &ServerKeyShare,
-    ) -> Result<UserId, Error> {
-        let submission = SetStartingCoordsRequest {
-            user_id,
-            starting_coords: cipher_text.clone(),
-            sks: sks.clone(),
-        };
-        self.post_msgpack("/submit", &submission).await
-    }
+    // pub async fn set_starting_coords(
+    //     &self,
+    //     user_id: usize,
+    //     starting_coords: &Cipher,
+    //     sks: &ServerKeyShare,
+    // ) -> Result<UserId, Error> {
+    //     let submission = SetStartingCoordsRequest {
+    //         user_id,
+    //         starting_coords: cipher_text.clone(),
+    //         sks: sks.clone(),
+    //     };
+    //     self.post_msgpack("/submit", &submission).await
+    // }
 
-    // Each round, client can submiit one of the 3 actions
-    // Action include (move_player, lay_egg, pickup_egg)
+    // // Each round, client can submiit one of the 3 actions
+    // // Action include (move_player, lay_egg, pickup_egg)
 
-    pub async fn move_player(&self, user_id: usize, direction: &Cipher) -> Result<UserId, Error> {
-        let submission = CipherSubmission {
-            user_id,
-            direction: cipher_text.clone(),
-        };
-        self.post_msgpack("/submit", &submission).await
-    }
+    // pub async fn move_player(&self, user_id: usize, direction: &Cipher) -> Result<UserId, Error> {
+    //     let submission = CipherSubmission {
+    //         user_id,
+    //         direction: cipher_text.clone(),
+    //     };
+    //     self.post_msgpack("/submit", &submission).await
+    // }
 
-    pub async fn lay_egg(&self, user_id: usize) -> Result<UserId, Error> {
-        let submission = CipherSubmission { user_id };
-        self.post_msgpack("/submit", &submission).await
-    }
+    // pub async fn lay_egg(&self, user_id: usize) -> Result<UserId, Error> {
+    //     let submission = CipherSubmission { user_id };
+    //     self.post_msgpack("/submit", &submission).await
+    // }
 
-    pub async fn pickup_egg(&self, user_id: usize) -> Result<UserId, Error> {
-        let submission = CipherSubmission { user_id };
-        self.post_msgpack("/submit", &submission).await
-    }
+    // pub async fn pickup_egg(&self, user_id: usize) -> Result<UserId, Error> {
+    //     let submission = CipherSubmission { user_id };
+    //     self.post_msgpack("/submit", &submission).await
+    // }
 
-    // After the actions submitted from all users,
-    // they can call get_cell
-    pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {
-        let submission = CipherSubmission { user_id };
-        self.post_msgpack("/submit", &submission).await
-    }
+    // // After the actions submitted from all users,
+    // // they can call get_cell
+    // pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {
+    //     let submission = CipherSubmission { user_id };
+    //     self.post_msgpack("/submit", &submission).await
+    // }
 
     // After get_cell, need to decrypt the result
     // user i should be the last person to decrypt the reesult for his get_cell

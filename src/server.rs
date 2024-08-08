@@ -1,4 +1,4 @@
-use crate::circuit::{derive_server_key, preprocess_ciphers, PARAMETER};
+use crate::circuit::{derive_server_key, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
 use crate::time;
 use crate::types::{
@@ -103,9 +103,8 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                     .collect_vec();
 
                                 // Long running
-                                let output = time!(|| evaluate_circuit(&cis), "Evaluating Circuit");
                                 let mut ss = s2.blocking_lock();
-                                ss.fhe_outputs = Some(output);
+                                ss.fhe_outputs = None;
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
                             })
