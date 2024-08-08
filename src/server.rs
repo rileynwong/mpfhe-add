@@ -1,11 +1,12 @@
 use crate::circuit::{derive_server_key, evaluate_circuit, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
+use crate::time;
 use crate::types::{
-    CipherSubmission, DecryptionShareSubmission, Error, ErrorResponse, MutexServerStorage,
-    ServerState, ServerStorage, UserStorage,
+    CircuitOutput, DecryptionShare, DecryptionShareSubmission, Error, ErrorResponse,
+    InputSubmission, MutexServerStorage, Seed, ServerState, ServerStorage, UserId, UserStorage,
 };
-use crate::{time, DecryptionShare, Seed, UserId};
-use phantom_zone::{set_common_reference_seed, set_parameter_set, FheUint8};
+use itertools::Itertools;
+use phantom_zone::{set_common_reference_seed, set_parameter_set};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
 use rocket::serde::msgpack::MsgPack;
@@ -54,22 +55,18 @@ async fn get_dashboard(ss: &State<MutexServerStorage>) -> Json<Dashboard> {
 /// The user submits the ciphertext
 #[post("/submit", data = "<submission>", format = "msgpack")]
 async fn submit(
-    submission: MsgPack<CipherSubmission>,
+    submission: MsgPack<InputSubmission>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let mut ss = ss.lock().await;
 
     ss.ensure(ServerState::ReadyForInputs)?;
 
-    let CipherSubmission {
-        user_id,
-        cipher_text,
-        sks,
-    } = submission.0;
+    let InputSubmission { user_id, ei, sks } = submission.0;
 
     let user = ss.get_user(user_id)?;
     println!("{} submited data", user.name);
-    user.storage = UserStorage::CipherSks(cipher_text, Box::new(sks));
+    user.storage = UserStorage::CipherSks(ei, Box::new(sks));
 
     if ss.check_cipher_submission() {
         ss.transit(ServerState::ReadyForRunning);
@@ -86,7 +83,7 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
 
     match &ss.state {
         ServerState::ReadyForRunning => {
-            let (server_key_shares, ciphers) = ss.get_ciphers_and_sks()?;
+            let (server_key_shares, encrypted_inputs) = ss.get_ciphers_and_sks()?;
 
             tokio::task::spawn_blocking(move || {
                 rayon::ThreadPoolBuilder::new()
@@ -102,11 +99,18 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                 println!("Begin FHE run");
                                 // Long running, global variable change
                                 derive_server_key(&server_key_shares);
+
+                                // Unpack to get circuit inputs
+                                let cis = encrypted_inputs
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(user_id, ei)| ei.unpack(user_id))
+                                    .collect_vec();
+
                                 // Long running
-                                let output =
-                                    time!(|| evaluate_circuit(&ciphers), "Evaluating Circuit");
+                                let output = time!(|| evaluate_circuit(&cis), "Evaluating Circuit");
                                 let mut ss = s2.blocking_lock();
-                                ss.fhe_outputs = output;
+                                ss.fhe_outputs = Some(output);
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
                             })
@@ -130,10 +134,14 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
 #[get("/fhe_output")]
 async fn get_fhe_output(
     ss: &State<MutexServerStorage>,
-) -> Result<Json<Vec<FheUint8>>, ErrorResponse> {
+) -> Result<Json<CircuitOutput>, ErrorResponse> {
     let ss = ss.lock().await;
     ss.ensure(ServerState::CompletedFhe)?;
-    Ok(Json(ss.fhe_outputs.to_vec()))
+    let output = ss
+        .fhe_outputs
+        .clone()
+        .expect("Should exist after CompletedFhe");
+    Ok(Json(output))
 }
 
 /// The user submits the ciphertext

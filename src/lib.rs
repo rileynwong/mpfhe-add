@@ -1,14 +1,14 @@
 mod circuit;
 mod client;
+mod compiled;
 mod dashboard;
 mod server;
 mod types;
 
 pub use client::WebClient;
 pub use server::{rocket, setup};
-
 pub use types::{
-    Cipher, ClientKey, DecryptionShare, DecryptionSharesMap, FheUint8, Seed, ServerKeyShare,
+    recover, u64_to_binary, EncryptedInput, CircuitOutput, ClientKey, DecryptionSharesMap, Score,
     ServerState, UserId,
 };
 

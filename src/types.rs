@@ -1,8 +1,10 @@
+use crate::dashboard::{Dashboard, RegisteredUser};
 use itertools::Itertools;
 use phantom_zone::{
     evaluator::NonInteractiveMultiPartyCrs,
     keys::CommonReferenceSeededNonInteractiveMultiPartyServerKeyShare, parameters::BoolParameters,
-    SeededBatchedFheUint8,
+    Encryptor, FheBool, KeySwitchWithId, MultiPartyDecryptor, NonInteractiveSeededFheBools,
+    SampleExtractor,
 };
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio::sync::Mutex;
@@ -10,22 +12,120 @@ use rocket::Responder;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::Arc;
-
 use thiserror::Error;
 
-use crate::dashboard::{Dashboard, RegisteredUser};
+pub type Score = PlainWord;
+pub type ClientKey = phantom_zone::ClientKey;
+pub type UserId = usize;
 
-pub type Seed = [u8; 32];
-pub type ServerKeyShare = CommonReferenceSeededNonInteractiveMultiPartyServerKeyShare<
+pub(crate) type Seed = [u8; 32];
+pub(crate) type ServerKeyShare = CommonReferenceSeededNonInteractiveMultiPartyServerKeyShare<
     Vec<Vec<u64>>,
     BoolParameters<u64>,
     NonInteractiveMultiPartyCrs<Seed>,
 >;
-pub type Cipher = SeededBatchedFheUint8<Vec<u64>, Seed>;
-pub type DecryptionShare = Vec<u64>;
-pub type ClientKey = phantom_zone::ClientKey;
-pub type UserId = usize;
-pub type FheUint8 = phantom_zone::FheUint8;
+pub(crate) type Word = Vec<FheBool>;
+pub(crate) type CircuitInput = Vec<Word>;
+/// Decryption share for a word from one user.
+pub(crate) type DecryptionShare = Vec<u64>;
+
+type PlainWord = i32;
+type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
+
+/// Encrypted input words contributed from one user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedInput {
+    karma_sent: Vec<EncryptedWord>,
+}
+
+impl EncryptedInput {
+    pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
+        let cipher = karma
+            .iter()
+            .map(|score| encrypt_plain(ck, *score))
+            .collect_vec();
+        Self { karma_sent: cipher }
+    }
+
+    /// Unpack ciphers
+    ///
+    /// 1. Decompression: A cipher is a matrix generated from a seed. The seed is sent through the network as a compression. By calling the `unseed` method we recovered the matrix here.
+    /// 2. Key Switch: We reencrypt the cipher with the server key for the computation. We need to specify the original signer of the cipher.
+    /// 3. Extract: A user's encrypted inputs are packed in a batched struct. We call `extract_all` method to convert it to unbatched word.
+    pub(crate) fn unpack(&self, user_id: UserId) -> CircuitInput {
+        self.karma_sent
+            .iter()
+            .map(|word| {
+                word.unseed::<Vec<Vec<u64>>>()
+                    .key_switch(user_id)
+                    .extract_all()
+            })
+            .collect_vec()
+    }
+}
+
+fn encrypt_plain(ck: &ClientKey, plain: PlainWord) -> EncryptedWord {
+    let plain = u64_to_binary::<32>(plain as u64);
+    ck.encrypt(plain.as_slice())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CircuitOutput {
+    /// Computed karma balance of all users
+    karma_balance: Vec<Word>,
+}
+
+impl CircuitOutput {
+    pub(crate) fn new(karma_balance: Vec<Word>) -> Self {
+        Self { karma_balance }
+    }
+
+    /// For each output word, a user generates its decryption share
+    pub fn gen_decryption_shares(&self, ck: &ClientKey) -> Vec<DecryptionShare> {
+        self.karma_balance
+            .iter()
+            .map(|word| gen_decryption_shares(ck, word))
+            .collect_vec()
+    }
+
+    pub fn decrypt(&self, ck: &ClientKey, dss: &[Vec<DecryptionShare>]) -> Vec<PlainWord> {
+        self.karma_balance
+            .iter()
+            .zip_eq(dss)
+            .map(|(word, shares)| decrypt_word(ck, word, shares))
+            .collect_vec()
+    }
+
+    /// Get number of outputs
+    pub fn n(&self) -> usize {
+        self.karma_balance.len()
+    }
+}
+
+fn gen_decryption_shares(ck: &ClientKey, fhe_output: &Word) -> DecryptionShare {
+    let dec_shares = fhe_output
+        .iter()
+        .map(|out_bit| ck.gen_decryption_share(out_bit))
+        .collect_vec();
+    dec_shares
+}
+
+fn decrypt_word(ck: &ClientKey, fhe_output: &Word, shares: &[DecryptionShare]) -> PlainWord {
+    // A DecryptionShare is user i's contribution to word j.
+    // To decrypt word j at bit position k. We need to extract the position k of user i's share.
+    let decrypted_bits = fhe_output
+        .iter()
+        .enumerate()
+        .map(|(bit_k, fhe_bit)| {
+            let shares_for_bit_k = shares
+                .iter()
+                .map(|user_share| user_share[bit_k])
+                .collect_vec();
+            ck.aggregate_decryption_shares(fhe_bit, &shares_for_bit_k)
+        })
+        .collect_vec();
+    recover(&decrypted_bits) as i32
+}
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
@@ -104,7 +204,7 @@ pub(crate) struct ServerStorage {
     pub(crate) seed: Seed,
     pub(crate) state: ServerState,
     pub(crate) users: Vec<UserRecord>,
-    pub(crate) fhe_outputs: Vec<FheUint8>,
+    pub(crate) fhe_outputs: Option<CircuitOutput>,
 }
 
 impl ServerStorage {
@@ -113,7 +213,7 @@ impl ServerStorage {
             seed,
             state: ServerState::ReadyForJoining,
             users: vec![],
-            fhe_outputs: Default::default(),
+            fhe_outputs: None,
         }
     }
 
@@ -150,7 +250,7 @@ impl ServerStorage {
 
     pub(crate) fn get_ciphers_and_sks(
         &mut self,
-    ) -> Result<(Vec<ServerKeyShare>, Vec<Cipher>), Error> {
+    ) -> Result<(Vec<ServerKeyShare>, Vec<EncryptedInput>), Error> {
         let mut server_key_shares = vec![];
         let mut ciphers = vec![];
         for (user_id, user) in self.users.iter_mut().enumerate() {
@@ -180,12 +280,12 @@ pub(crate) struct UserRecord {
 #[derive(Debug, Clone)]
 pub(crate) enum UserStorage {
     Empty,
-    CipherSks(Cipher, Box<ServerKeyShare>),
+    CipherSks(EncryptedInput, Box<ServerKeyShare>),
     DecryptionShare(Option<Vec<DecryptionShare>>),
 }
 
 impl UserStorage {
-    pub(crate) fn get_cipher_sks(&self) -> Option<(&Cipher, &ServerKeyShare)> {
+    pub(crate) fn get_cipher_sks(&self) -> Option<(&EncryptedInput, &ServerKeyShare)> {
         match self {
             Self::CipherSks(cipher, sks) => Some((cipher, sks)),
             _ => None,
@@ -202,14 +302,14 @@ impl UserStorage {
     }
 }
 
-/// FheUint8 index -> user_id -> decryption share
+/// ([`Word`] index, user_id) -> decryption share
 pub type DecryptionSharesMap = HashMap<(usize, UserId), DecryptionShare>;
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
-pub(crate) struct CipherSubmission {
+pub(crate) struct InputSubmission {
     pub(crate) user_id: UserId,
-    pub(crate) cipher_text: Cipher,
+    pub(crate) ei: EncryptedInput,
     pub(crate) sks: ServerKeyShare,
 }
 
@@ -217,6 +317,25 @@ pub(crate) struct CipherSubmission {
 #[serde(crate = "rocket::serde")]
 pub(crate) struct DecryptionShareSubmission {
     pub(crate) user_id: UserId,
-    /// The user sends decryption share Vec<u64> for each FheUint8.
+    /// The user sends decryption share for each [`Word`].
     pub(crate) decryption_shares: Vec<DecryptionShare>,
+}
+
+pub fn u64_to_binary<const N: usize>(v: u64) -> [bool; N] {
+    assert!((v as u128) < 2u128.pow(N as u32));
+    let mut result = [false; N];
+    for (i, bit) in result.iter_mut().enumerate() {
+        if (v >> i) & 1 == 1 {
+            *bit = true;
+        }
+    }
+    result
+}
+
+pub fn recover(bits: &[bool]) -> u32 {
+    let mut out: u32 = 0;
+    for (i, bit) in bits.iter().enumerate() {
+        out |= (*bit as u32) << i;
+    }
+    out
 }
