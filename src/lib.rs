@@ -8,11 +8,7 @@ mod types;
 pub use client::WebClient;
 pub use server::{rocket, setup};
 pub use types::{
-<<<<<<< HEAD
-    Cipher, ClientKey, DecryptionShare, DecryptionSharesMap, FheBool, Seed, ServerKeyShare,
-=======
-    recover, u64_to_binary, EncryptedInput, CircuitOutput, ClientKey, DecryptionSharesMap, Score,
->>>>>>> main
+    recover, u64_to_binary, CircuitOutput, ClientKey, DecryptionSharesMap, EncryptedInput, Score,
     ServerState, UserId,
 };
 
