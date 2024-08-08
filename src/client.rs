@@ -1,6 +1,6 @@
 use crate::dashboard::{Dashboard, RegisteredUser};
 use crate::types::{
-    Cipher, CipherSubmission, DecryptionShare, DecryptionShareSubmission, FheUint8, Seed,
+    Cipher, CipherSubmission, DecryptionShare, DecryptionShareSubmission, FheBool, Seed,
     ServerKeyShare, ServerState, UserId,
 };
 use anyhow::{anyhow, bail, Error};
@@ -124,27 +124,68 @@ impl WebClient {
     pub async fn register(&self, name: &str) -> Result<RegisteredUser, Error> {
         self.post("/register", name.as_bytes().to_vec()).await
     }
+
     pub async fn get_dashboard(&self) -> Result<Dashboard, Error> {
         self.get("/dashboard").await
     }
 
-    pub async fn conclude_registration(&self) -> Result<Dashboard, Error> {
-        self.post_nobody("/conclude_registration").await
+    // This function can only be called by user 0
+    pub async fn init_game(&self, initial_eggs: &Cipher) -> Result<UserId, Error> {
+        let submission = InitGameRequest {
+            initial_eggs: cipher_text.clone(),
+        };
+        self.post_msgpack("/init_game", &submission).await
     }
 
-    pub async fn submit_cipher(
+    pub async fn set_starting_coords(
         &self,
-        user_id: UserId,
-        cipher_text: &Cipher,
+        user_id: usize,
+        starting_coords: &Cipher,
         sks: &ServerKeyShare,
     ) -> Result<UserId, Error> {
-        let submission = CipherSubmission {
+        let submission = SetStartingCoordsRequest {
             user_id,
-            cipher_text: cipher_text.clone(),
+            starting_coords: cipher_text.clone(),
             sks: sks.clone(),
         };
         self.post_msgpack("/submit", &submission).await
     }
+
+    // Each round, client can submiit one of the 3 actions
+    // Action include (move_player, lay_egg, pickup_egg)
+
+    pub async fn move_player(&self, user_id: usize, direction: &Cipher) -> Result<UserId, Error> {
+        let submission = CipherSubmission {
+            user_id,
+            direction: cipher_text.clone(),
+        };
+        self.post_msgpack("/submit", &submission).await
+    }
+
+    pub async fn lay_egg(&self, user_id: usize) -> Result<UserId, Error> {
+        let submission = CipherSubmission { user_id };
+        self.post_msgpack("/submit", &submission).await
+    }
+
+    pub async fn pickup_egg(&self, user_id: usize) -> Result<UserId, Error> {
+        let submission = CipherSubmission { user_id };
+        self.post_msgpack("/submit", &submission).await
+    }
+
+    // After the actions submitted from all users,
+    // they can call get_cell
+    pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {
+        let submission = CipherSubmission { user_id };
+        self.post_msgpack("/submit", &submission).await
+    }
+
+    // After get_cell, need to decrypt the result
+    // user i should be the last person to decrypt the reesult for his get_cell
+
+    // Server state
+    // Round start (each user can submiit one action)
+    // GetCell (each user can call get cell)
+    // DecryptResult (decrypt each user's result)
 
     pub async fn trigger_fhe_run(&self) -> Result<ServerState, Error> {
         self.post_nobody("/run").await

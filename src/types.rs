@@ -2,12 +2,13 @@ use itertools::Itertools;
 use phantom_zone::{
     evaluator::NonInteractiveMultiPartyCrs,
     keys::CommonReferenceSeededNonInteractiveMultiPartyServerKeyShare, parameters::BoolParameters,
-    SeededBatchedFheUint8,
+    NonInteractiveSeededFheBools,
 };
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio::sync::Mutex;
 use rocket::Responder;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -21,11 +22,11 @@ pub type ServerKeyShare = CommonReferenceSeededNonInteractiveMultiPartyServerKey
     BoolParameters<u64>,
     NonInteractiveMultiPartyCrs<Seed>,
 >;
-pub type Cipher = SeededBatchedFheUint8<Vec<u64>, Seed>;
+pub type Cipher = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 pub type DecryptionShare = Vec<u64>;
 pub type ClientKey = phantom_zone::ClientKey;
 pub type UserId = usize;
-pub type FheUint8 = phantom_zone::FheUint8;
+pub type FheBool = phantom_zone::FheBool;
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
@@ -104,7 +105,8 @@ pub(crate) struct ServerStorage {
     pub(crate) seed: Seed,
     pub(crate) state: ServerState,
     pub(crate) users: Vec<UserRecord>,
-    pub(crate) fhe_outputs: Vec<FheUint8>,
+    pub(crate) fhe_outputs: Vec<FheBool>,
+    pub(crate) eggs: Vec<FheBool>,
 }
 
 impl ServerStorage {
@@ -114,6 +116,7 @@ impl ServerStorage {
             state: ServerState::ReadyForJoining,
             users: vec![],
             fhe_outputs: Default::default(),
+            eggs: vec![],
         }
     }
 
@@ -205,12 +208,18 @@ impl UserStorage {
 /// FheUint8 index -> user_id -> decryption share
 pub type DecryptionSharesMap = HashMap<(usize, UserId), DecryptionShare>;
 
+// #[derive(Serialize, Deserialize)]
+// #[serde(crate = "rocket::serde")]
+// pub(crate) struct CipherSubmission {
+//     pub(crate) user_id: UserId,
+//     pub(crate) cipher_text: Cipher,
+//     pub(crate) sks: ServerKeyShare,
+// }
+
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
-pub(crate) struct CipherSubmission {
-    pub(crate) user_id: UserId,
-    pub(crate) cipher_text: Cipher,
-    pub(crate) sks: ServerKeyShare,
+pub(crate) struct InitGameRequest {
+    pub(crate) initial_eggs: Cipher,
 }
 
 #[derive(Serialize, Deserialize)]

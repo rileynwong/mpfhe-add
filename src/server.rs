@@ -1,4 +1,4 @@
-use crate::circuit::{derive_server_key, evaluate_circuit, PARAMETER};
+use crate::circuit::{derive_server_key, preprocess_ciphers, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
 use crate::types::{
     CipherSubmission, DecryptionShareSubmission, Error, ErrorResponse, MutexServerStorage,
@@ -20,6 +20,7 @@ async fn get_param(ss: &State<MutexServerStorage>) -> Json<Seed> {
 }
 
 /// A user registers a name and get an ID
+/// We support 4 players
 #[post("/register", data = "<name>")]
 async fn register(
     name: &str,
@@ -30,19 +31,13 @@ async fn register(
     let user = ss.add_user(name);
     println!("{name} just joined!");
 
-    Ok(Json(user))
-}
+    if ss.users.len() == 4 {
+        ss.ensure(ServerState::ReadyForJoining)?;
+        ss.transit(ServerState::ReadyForInputs);
+        println!("Got 4 players. Registration closed!");
+    }
 
-#[post("/conclude_registration")]
-async fn conclude_registration(
-    ss: &State<MutexServerStorage>,
-) -> Result<Json<Dashboard>, ErrorResponse> {
-    let mut ss = ss.lock().await;
-    ss.ensure(ServerState::ReadyForJoining)?;
-    ss.transit(ServerState::ReadyForInputs);
-    println!("Registration closed!");
-    let dashboard = ss.get_dashboard();
-    Ok(Json(dashboard))
+    Ok(Json(user))
 }
 
 #[get("/dashboard")]
@@ -192,7 +187,6 @@ pub fn rocket() -> Rocket<Build> {
             routes![
                 get_param,
                 register,
-                conclude_registration,
                 get_dashboard,
                 submit,
                 run,

@@ -8,7 +8,7 @@ pub use client::WebClient;
 pub use server::{rocket, setup};
 
 pub use types::{
-    Cipher, ClientKey, DecryptionShare, DecryptionSharesMap, FheUint8, Seed, ServerKeyShare,
+    Cipher, ClientKey, DecryptionShare, DecryptionSharesMap, FheBool, Seed, ServerKeyShare,
     ServerState, UserId,
 };
 
