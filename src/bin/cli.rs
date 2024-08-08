@@ -1,18 +1,17 @@
 use anyhow::{anyhow, bail, ensure, Error};
+use clap::{command, Parser};
+use itertools::Itertools;
+use karma_calculator::{
+    setup, CircuitOutput, DecryptionSharesMap, EncryptedInput, Score, ServerState, UserId,
+    WebClient,
+};
+use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
+use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{collections::HashMap, fmt::Display, iter::zip};
 use tabled::{settings::Style, Table, Tabled};
 
-use clap::command;
-use itertools::Itertools;
-use karma_calculator::{setup, DecryptionSharesMap, ServerState, WebClient};
-
-use rustyline::{error::ReadlineError, DefaultEditor};
-
-use phantom_zone::{
-    gen_client_key, gen_server_key_share, ClientKey, Encryptor, FheUint8, MultiPartyDecryptor,
-};
-
-use clap::Parser;
+/// HACK: Bound max input value on client side;
+const MAX_INPUT_VALUE: Score = 1000;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -26,7 +25,7 @@ enum State {
     Init(StateInit),
     Setup(StateSetup),
     ConcludedRegistration(ConcludedRegistration),
-    EncryptedInput(EncryptedInput),
+    SubmittedInput(SubmittedInput),
     TriggeredRun(StateTriggeredRun),
     DownloadedOutput(StateDownloadedOuput),
     Decrypted(StateDecrypted),
@@ -38,7 +37,7 @@ impl Display for State {
             State::Init(_) => "Initialization",
             State::Setup(_) => "Setup",
             State::ConcludedRegistration(_) => "Concluded Registration",
-            State::EncryptedInput(_) => "Encrypted Input",
+            State::SubmittedInput(_) => "Encrypted Input",
             State::TriggeredRun(_) => "Triggered Run",
             State::DownloadedOutput(_) => "Downloaded Output",
             State::Decrypted(_) => "Decrypted",
@@ -55,7 +54,7 @@ impl State {
             }
             State::Setup(StateSetup { .. }) => "✅ Setup completed!".to_string(),
             State::ConcludedRegistration(_) => "✅ Users' names acquired!".to_string(),
-            State::EncryptedInput(_) => "✅ Ciphertext submitted!".to_string(),
+            State::SubmittedInput(_) => "✅ Ciphertext submitted!".to_string(),
             State::TriggeredRun(_) => "✅ FHE run triggered!".to_string(),
             State::DownloadedOutput(_) => "✅ FHE output downloaded!".to_string(),
             State::Decrypted(_) => "✅ FHE output decrypted!".to_string(),
@@ -68,13 +67,21 @@ impl State {
             State::Setup(_) => "Enter `conclude` to end registration or `next` to proceed",
             State::ConcludedRegistration(ConcludedRegistration { names, .. }) => {
                 let total_users = names.len();
-                &format!(
-                    "Enter `next` with scores for each user to continue. Example: `next {}`",
-                    (0..total_users)
-                        .map(|n| n.to_string())
-                        .collect::<Vec<String>>()
-                        .join(" ")
-                )
+                &[
+                    "Enter `next` with Karma values you'd like to send to each user.",
+                    &format!(
+                        "Example: `next {}`",
+                        (0..total_users)
+                            .map(|n| n.to_string())
+                            .collect::<Vec<String>>()
+                            .join(" ")
+                    ),
+                    &format!(
+                        "(Maxium Karma you can send for each user: {})",
+                        MAX_INPUT_VALUE
+                    ),
+                ]
+                .join("\n")
             }
             State::Decrypted(_) => "Exit with `CTRL-D`",
             _ => "Enter `next` to continue",
@@ -92,50 +99,51 @@ struct StateSetup {
     name: String,
     client: WebClient,
     ck: ClientKey,
-    user_id: usize,
+    user_id: UserId,
 }
 
 struct ConcludedRegistration {
     name: String,
     client: WebClient,
     ck: ClientKey,
-    user_id: usize,
+    user_id: UserId,
     names: Vec<String>,
 }
 
-struct EncryptedInput {
+struct SubmittedInput {
     name: String,
     client: WebClient,
     ck: ClientKey,
-    user_id: usize,
+    user_id: UserId,
     names: Vec<String>,
-    scores: Vec<u8>,
+    scores: Vec<Score>,
 }
 
 struct StateTriggeredRun {
     name: String,
     client: WebClient,
     ck: ClientKey,
-    user_id: usize,
+    user_id: UserId,
     names: Vec<String>,
-    scores: Vec<u8>,
+    scores: Vec<Score>,
 }
 
 struct StateDownloadedOuput {
+    #[allow(dead_code)]
     name: String,
     client: WebClient,
     ck: ClientKey,
     names: Vec<String>,
-    scores: Vec<u8>,
-    fhe_out: Vec<FheUint8>,
+    scores: Vec<Score>,
+    fhe_out: CircuitOutput,
     shares: DecryptionSharesMap,
 }
 
 struct StateDecrypted {
     names: Vec<String>,
     client: WebClient,
-    scores: Vec<u8>,
-    decrypted_output: Vec<u8>,
+    scores: Vec<Score>,
+    decrypted_output: Vec<Score>,
 }
 
 #[tokio::main]
@@ -214,15 +222,15 @@ async fn cmd_conclude_registration(client: &WebClient) -> Result<Vec<String>, Er
 async fn cmd_score_encrypt(
     args: &[&str],
     client: &WebClient,
-    user_id: &usize,
+    user_id: &UserId,
     names: &Vec<String>,
     ck: &ClientKey,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<Score>, Error> {
     let total_users = names.len();
-    let scores: Result<Vec<u8>, Error> = args
+    let scores: Result<Vec<_>, Error> = args
         .iter()
         .map(|s| {
-            s.parse::<u8>()
+            s.parse::<Score>()
                 .map_err(|err| anyhow::format_err!(err.to_string()))
         })
         .collect_vec()
@@ -236,23 +244,24 @@ async fn cmd_score_encrypt(
         total_users
     );
     ensure!(
-        scores.iter().all(|&x| x <= 127u8),
-        "All scores should be less or equal than 127. Scores: {:#?}",
+        scores.iter().all(|&x| x <= MAX_INPUT_VALUE && x >= 0),
+        "All scores should be in range of 0 to {}. Scores: {:#?}",
+        MAX_INPUT_VALUE,
         scores,
     );
-    let total: u8 = scores.iter().sum();
+    let total: Score = scores.iter().sum();
     for (name, score) in zip(names, scores.iter()) {
         println!("Give {name} {score} karma");
     }
     println!("I gave out {total} karma");
 
-    println!("Encrypting Inputs");
-    let cipher = ck.encrypt(scores.as_slice());
+    let ei = EncryptedInput::from_plain(ck, &scores);
+
     println!("Generating server key share");
     let sks = gen_server_key_share(*user_id, total_users, ck);
 
     println!("Submit the cipher and the server key share");
-    client.submit_cipher(*user_id, &cipher, &sks).await?;
+    client.submit_cipher(*user_id, &ei, &sks).await?;
     Ok(scores)
 }
 
@@ -265,9 +274,9 @@ async fn cmd_run(client: &WebClient) -> Result<(), Error> {
 
 async fn cmd_download_output(
     client: &WebClient,
-    user_id: &usize,
+    user_id: &UserId,
     ck: &ClientKey,
-) -> Result<(Vec<FheUint8>, HashMap<(usize, usize), Vec<u64>>), Error> {
+) -> Result<(CircuitOutput, HashMap<(usize, UserId), Vec<u64>>), Error> {
     let resp = client.trigger_fhe_run().await?;
     if !matches!(resp, ServerState::CompletedFhe) {
         bail!("FHE is still running")
@@ -278,13 +287,10 @@ async fn cmd_download_output(
 
     println!("Generating my decrypting shares");
     let mut shares = HashMap::new();
-    let mut my_decryption_shares = Vec::new();
-    for (out_id, out) in fhe_out.iter().enumerate() {
-        let share = ck.gen_decryption_share(out);
-        my_decryption_shares.push(share.clone());
-        shares.insert((out_id, *user_id), share);
+    let my_decryption_shares = fhe_out.gen_decryption_shares(ck);
+    for (out_id, share) in my_decryption_shares.iter().enumerate() {
+        shares.insert((out_id, *user_id), share.to_vec());
     }
-
     println!("Submitting my decrypting shares");
     client
         .submit_decryption_shares(*user_id, &my_decryption_shares)
@@ -297,33 +303,31 @@ async fn cmd_download_shares(
     names: &[String],
     ck: &ClientKey,
     shares: &mut HashMap<(usize, usize), Vec<u64>>,
-    fhe_out: &[FheUint8],
-    scores: &[u8],
-) -> Result<Vec<u8>, Error> {
+    co: &CircuitOutput,
+    scores: &[Score],
+) -> Result<Vec<Score>, Error> {
     let total_users = names.len();
     println!("Acquiring decryption shares needed");
-    for (output_id, user_id) in (0..total_users).cartesian_product(0..total_users) {
+    for (output_id, user_id) in (0..co.n()).cartesian_product(0..total_users) {
         if shares.get(&(output_id, user_id)).is_none() {
             let ds = client.get_decryption_share(output_id, user_id).await?;
             shares.insert((output_id, user_id), ds);
         }
     }
     println!("Decrypt the encrypted output");
-    let decrypted_output = fhe_out
-        .iter()
-        .enumerate()
-        .map(|(output_id, output)| {
-            let decryption_shares = (0..total_users)
+    let dss = (0..co.n())
+        .map(|output_id| {
+            (0..total_users)
                 .map(|user_id| {
                     shares
                         .get(&(output_id, user_id))
                         .expect("exists")
                         .to_owned()
                 })
-                .collect_vec();
-            ck.aggregate_decryption_shares(output, &decryption_shares)
+                .collect_vec()
         })
         .collect_vec();
+    let decrypted_output = co.decrypt(ck, &dss);
     println!("Final decrypted output:");
     present_balance(names, scores, &decrypted_output);
     Ok(decrypted_output)
@@ -365,7 +369,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             },
             State::ConcludedRegistration(s) => {
                 match cmd_score_encrypt(args, &s.client, &s.user_id, &s.names, &s.ck).await {
-                    Ok(scores) => Ok(State::EncryptedInput(EncryptedInput {
+                    Ok(scores) => Ok(State::SubmittedInput(SubmittedInput {
                         name: s.name,
                         client: s.client,
                         ck: s.ck,
@@ -376,7 +380,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     Err(err) => Err((err, State::ConcludedRegistration(s))),
                 }
             }
-            State::EncryptedInput(s) => match cmd_run(&s.client).await {
+            State::SubmittedInput(s) => match cmd_run(&s.client).await {
                 Ok(()) => Ok(State::TriggeredRun(StateTriggeredRun {
                     name: s.name,
                     client: s.client,
@@ -385,7 +389,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     names: s.names,
                     scores: s.scores,
                 })),
-                Err(err) => Err((err, State::EncryptedInput(s))),
+                Err(err) => Err((err, State::SubmittedInput(s))),
             },
             State::TriggeredRun(s) => match cmd_download_output(&s.client, &s.user_id, &s.ck).await
             {
@@ -454,7 +458,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             State::Init(StateInit { client, .. })
             | State::Setup(StateSetup { client, .. })
             | State::ConcludedRegistration(ConcludedRegistration { client, .. })
-            | State::EncryptedInput(EncryptedInput { client, .. })
+            | State::SubmittedInput(SubmittedInput { client, .. })
             | State::TriggeredRun(StateTriggeredRun { client, .. })
             | State::DownloadedOutput(StateDownloadedOuput { client, .. })
             | State::Decrypted(StateDecrypted { client, .. }) => {
@@ -474,18 +478,18 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
     }
 }
 
-fn present_balance(names: &[String], scores: &[u8], final_balances: &[u8]) {
+fn present_balance(names: &[String], scores: &[Score], final_balances: &[Score]) {
     #[derive(Tabled)]
     struct Row {
         name: String,
-        karma_i_sent: u8,
-        decrypted_karma_balance: i8,
+        karma_i_sent: Score,
+        decrypted_karma_balance: Score,
     }
     let table = zip(zip(names, scores), final_balances)
         .map(|((name, &karma_i_sent), &decrypted_karma_balance)| Row {
             name: name.to_string(),
             karma_i_sent,
-            decrypted_karma_balance: decrypted_karma_balance as i8,
+            decrypted_karma_balance,
         })
         .collect_vec();
     println!("{}", Table::new(table).with(Style::ascii_rounded()));

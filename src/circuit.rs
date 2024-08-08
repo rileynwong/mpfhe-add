@@ -1,11 +1,13 @@
-use itertools::Itertools;
-use phantom_zone::{
-    aggregate_server_key_shares, KeySwitchWithId, ParameterSelector, SampleExtractor,
+use crate::{
+    compiled::{karma_add, karma_sub},
+    time,
+    types::{CircuitInput, CircuitOutput, ServerKeyShare, Word},
 };
+use itertools::Itertools;
+use phantom_zone::{aggregate_server_key_shares, set_parameter_set, ParameterSelector};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-use crate::{time, Cipher, FheBool, ServerKeyShare};
-
-pub const PARAMETER: ParameterSelector = ParameterSelector::NonInteractiveLTE4Party;
+pub const PARAMETER: ParameterSelector = ParameterSelector::NonInteractiveLTE40PartyExperimental;
 
 /// Server work
 /// Warning: global variable change
@@ -34,4 +36,20 @@ pub(crate) fn preprocess_ciphers(ciphers: &[Cipher]) -> Vec<Vec<FheBool>> {
         })
         .collect_vec();
     ciphers
+}
+
+pub(crate) fn evaluate_circuit(cis: &[CircuitInput]) -> CircuitOutput {
+    let mut outs = vec![];
+
+    cis.par_iter()
+        .enumerate()
+        .map(|(my_id, my_ci)| {
+            let sent = sum_fhe_dyn(my_ci);
+            let received = cis.iter().map(|enc| enc[my_id].clone()).collect_vec();
+            let received = sum_fhe_dyn(&received);
+            set_parameter_set(PARAMETER);
+            karma_sub(&received, &sent)
+        })
+        .collect_into_vec(&mut outs);
+    CircuitOutput::new(outs)
 }

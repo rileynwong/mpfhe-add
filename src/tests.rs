@@ -1,20 +1,17 @@
-use circuit::PARAMETER;
-use itertools::Itertools;
-use phantom_zone::{
-    gen_client_key, gen_server_key_share, set_parameter_set, Encryptor, MultiPartyDecryptor,
-};
-use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
-use std::{collections::HashMap, time::Duration};
-use tokio::time::sleep;
-use types::ServerState;
-
+use crate::circuit::*;
+use crate::types::*;
 use crate::*;
 use anyhow::Error;
 use futures::future::join_all;
+use itertools::Itertools;
+use phantom_zone::{gen_client_key, gen_server_key_share, set_parameter_set};
+use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use rocket::{
     serde::{msgpack, Deserialize, Serialize},
     Build, Rocket,
 };
+use std::{collections::HashMap, time::Duration};
+use tokio::time::sleep;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 // We're not sending the User struct in rockets. This macro is here just for Serde reasons
@@ -29,12 +26,12 @@ struct User {
     id: Option<UserId>,
     total_users: Option<usize>,
     // step 2: assign scores
-    scores: Option<Vec<u8>>,
+    scores: Option<Vec<Score>>,
     // step 3: gen key and cipher
     server_key: Option<ServerKeyShare>,
-    cipher: Option<Cipher>,
+    cipher: Option<EncryptedInput>,
     // step 4: get FHE output
-    fhe_out: Option<Vec<FheUint8>>,
+    fhe_out: Option<CircuitOutput>,
     // step 5: derive decryption shares
     decryption_shares: DecryptionSharesMap,
 }
@@ -73,7 +70,7 @@ impl User {
         self.total_users = Some(total_users);
         self
     }
-    fn assign_scores(&mut self, scores: &[u8]) -> &mut Self {
+    fn assign_scores(&mut self, scores: &[Score]) -> &mut Self {
         self.scores = Some(scores.to_vec());
         self
     }
@@ -81,7 +78,8 @@ impl User {
     fn gen_cipher(&mut self) -> &mut Self {
         let scores = self.scores.as_ref().unwrap().to_vec();
         let ck: &ClientKey = self.ck.as_ref().unwrap();
-        let cipher: Cipher = ck.encrypt(scores.as_slice());
+
+        let cipher = EncryptedInput::from_plain(ck, &scores);
         self.cipher = Some(cipher);
         self
     }
@@ -96,7 +94,7 @@ impl User {
         self
     }
 
-    fn set_fhe_out(&mut self, fhe_out: Vec<FheUint8>) -> &mut Self {
+    fn set_fhe_out(&mut self, fhe_out: CircuitOutput) -> &mut Self {
         self.fhe_out = Some(fhe_out);
         self
     }
@@ -105,10 +103,11 @@ impl User {
         let ck = self.ck.as_ref().expect("already exists");
         let fhe_out = self.fhe_out.as_ref().expect("exists");
         let my_id = self.id.expect("exists");
-        for (output_id, out) in fhe_out.iter().enumerate() {
-            let my_decryption_share = ck.gen_decryption_share(out);
+
+        let my_decryption_shares = fhe_out.gen_decryption_shares(ck);
+        for (out_id, share) in my_decryption_shares.iter().enumerate() {
             self.decryption_shares
-                .insert((output_id, my_id), my_decryption_share);
+                .insert((out_id, my_id), share.to_vec());
         }
         self
     }
@@ -126,26 +125,24 @@ impl User {
             .collect_vec()
     }
 
-    fn decrypt_everything(&self) -> Vec<u8> {
+    fn decrypt_everything(&self) -> Vec<Score> {
         let total_users = self.total_users.expect("exist");
         let ck = self.ck.as_ref().expect("already exists");
-        let fhe_out = self.fhe_out.as_ref().expect("exists");
+        let co = self.fhe_out.as_ref().expect("exists");
 
-        fhe_out
-            .iter()
-            .enumerate()
-            .map(|(output_id, output)| {
-                let decryption_shares = (0..total_users)
+        let dss = (0..co.n())
+            .map(|output_id| {
+                (0..total_users)
                     .map(|user_id| {
                         self.decryption_shares
                             .get(&(output_id, user_id))
                             .expect("exists")
                             .to_owned()
                     })
-                    .collect_vec();
-                ck.aggregate_decryption_shares(output, &decryption_shares)
+                    .collect_vec()
             })
-            .collect_vec()
+            .collect_vec();
+        co.decrypt(ck, &dss)
     }
 }
 
@@ -189,14 +186,14 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
 
     // Assign scores
     for user in users.iter_mut() {
-        let scores: Vec<u8> = (0u8..total_users.try_into().unwrap()).collect_vec();
+        let scores: Vec<Score> = (0..total_users.try_into().unwrap()).collect_vec();
         user.assign_scores(&scores);
     }
 
     let mut correct_output = vec![];
     for (my_id, me) in users.iter().enumerate() {
-        let given_out = me.scores.as_ref().unwrap().iter().sum::<u8>();
-        let mut received = 0u8;
+        let given_out = me.scores.as_ref().unwrap().iter().sum::<Score>();
+        let mut received = 0;
         for other in users.iter() {
             received += other.scores.as_ref().unwrap()[my_id];
         }

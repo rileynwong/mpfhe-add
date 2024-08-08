@@ -1,7 +1,9 @@
-use crate::dashboard::{Dashboard, RegisteredUser};
-use crate::types::{
-    Cipher, CipherSubmission, DecryptionShare, DecryptionShareSubmission, FheBool, Seed,
-    ServerKeyShare, ServerState, UserId,
+use crate::{
+    dashboard::{Dashboard, RegisteredUser},
+    types::{
+        CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedInput, InputSubmission,
+        Seed, ServerKeyShare, ServerState, UserId,
+    },
 };
 use anyhow::{anyhow, bail, Error};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -191,7 +193,7 @@ impl WebClient {
         self.post_nobody("/run").await
     }
 
-    pub async fn get_fhe_output(&self) -> Result<Vec<FheUint8>, Error> {
+    pub async fn get_fhe_output(&self) -> Result<CircuitOutput, Error> {
         self.get("/fhe_output").await
     }
 
