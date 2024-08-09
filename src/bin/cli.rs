@@ -3,15 +3,12 @@ use clap::{command, Parser};
 use itertools::Itertools;
 use karma_calculator::{
     gen_decryption_shares, setup, AnnotatedDecryptionShare, CircuitOutput, DecryptionShare,
-    DecryptionSharesMap, Score, ServerState, UserAction, UserId, WebClient, Word,
+    DecryptionSharesMap, Direction, Score, ServerState, UserAction, UserId, WebClient, Word,
 };
 use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
 use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{collections::HashMap, fmt::Display, iter::zip};
 use tabled::{settings::Style, Table, Tabled};
-
-/// HACK: Bound max input value on client side;
-const MAX_INPUT_VALUE: Score = 1000;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -192,24 +189,34 @@ async fn cmd_get_names(client: &WebClient) -> Result<(bool, Vec<String>), Error>
     Ok((d.is_concluded(), d.get_names()))
 }
 
-async fn cmd_init(client: &WebClient) -> Result<(), Error> {
-    todo!()
+async fn cmd_init(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
+    let initial_eggs = [true];
+    client.init_game(ck, user_id, &initial_eggs).await?;
+    Ok(())
 }
 
-async fn cmd_setup_game(client: &WebClient) -> Result<(), Error> {
-    todo!()
+async fn cmd_setup_game(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
+    let starting_coords = [];
+    client
+        .set_starting_coords(ck, user_id, &starting_coords)
+        .await?;
+    Ok(())
 }
 
-async fn cmd_move(client: &WebClient) -> Result<(), Error> {
-    todo!()
+async fn cmd_move(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
+    let direction = Direction::Up;
+    client.move_player(ck, user_id, direction).await?;
+    Ok(())
 }
 
-async fn cmd_lay(client: &WebClient) -> Result<(), Error> {
-    todo!()
+async fn cmd_lay(client: &WebClient, user_id: UserId) -> Result<(), Error> {
+    client.lay_egg(user_id).await?;
+    Ok(())
 }
 
-async fn cmd_pickup(client: &WebClient) -> Result<(), Error> {
-    todo!()
+async fn cmd_pickup(client: &WebClient, user_id: UserId) -> Result<(), Error> {
+    client.pickup_egg(user_id).await?;
+    Ok(())
 }
 
 async fn cmd_submit_sks(
@@ -385,7 +392,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
         }
     } else if cmd == &"init" {
         match state {
-            State::SubmittedSks(s) => match cmd_init(&s.client).await {
+            State::SubmittedSks(s) => match cmd_init(&s.client, &s.ck, s.user_id).await {
                 Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
                     name: s.name,
                     client: s.client,
@@ -399,7 +406,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
         }
     } else if cmd == &"setup_game" {
         match state {
-            State::SubmittedSks(s) => match cmd_setup_game(&s.client).await {
+            State::SubmittedSks(s) => match cmd_setup_game(&s.client, &s.ck, s.user_id).await {
                 Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
                     name: s.name,
                     client: s.client,
@@ -413,7 +420,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
         }
     } else if cmd == &"move" {
         match state {
-            State::SubmittedSks(s) => match cmd_move(&s.client).await {
+            State::SubmittedSks(s) => match cmd_move(&s.client, &s.ck, s.user_id).await {
                 Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
                     name: s.name,
                     client: s.client,
@@ -427,7 +434,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
         }
     } else if cmd == &"lay" {
         match state {
-            State::SubmittedSks(s) => match cmd_lay(&s.client).await {
+            State::SubmittedSks(s) => match cmd_lay(&s.client, s.user_id).await {
                 Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
                     name: s.name,
                     client: s.client,
@@ -441,7 +448,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
         }
     } else if cmd == &"pickup" {
         match state {
-            State::SubmittedSks(s) => match cmd_pickup(&s.client).await {
+            State::SubmittedSks(s) => match cmd_pickup(&s.client, s.user_id).await {
                 Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
                     name: s.name,
                     client: s.client,
