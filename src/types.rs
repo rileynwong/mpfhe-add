@@ -42,6 +42,17 @@ enum Direction {
     Right,
 }
 
+fn u8_to_binary<const N: usize>(v: u8) -> [bool; N] {
+    assert!((v as u16) < 2u16.pow(N as u32));
+    let mut result = [false; N];
+    for i in 0..N {
+        if (v >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    result
+}
+
 fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
     let mut result = [false; N];
     for i in 0..N / 2 {
@@ -116,10 +127,10 @@ impl PlainCoord {
 pub enum UserAction<T> {
     InitGame { initial_eggs: T },
     SetStartingCoords { starting_coords: Vec<T> },
-    MovePlayer { coords: T, direction: T },
-    LayEgg { coords: T, eggs: T },
-    PickupEgg { coords: T, eggs: T },
-    GetCell { coords: T, eggs: T, players: T },
+    MovePlayer { direction: T },
+    LayEgg,
+    PickupEgg,
+    GetCell,
 }
 
 impl<T> Display for UserAction<T> {
@@ -158,8 +169,11 @@ impl UserAction<EncryptedWord> {
         Self::SetStartingCoords { starting_coords }
     }
 
-    pub fn move_player(direction: Direction) -> Self {
-        Self::MovePlayer { direction: () }
+    pub fn move_player(ck: &ClientKey, direction: Direction) -> Self {
+        let direction = u8_to_binary::<8>(direction as u8);
+        Self::MovePlayer {
+            direction: ck.encrypt(direction.as_slice()),
+        }
     }
 
     pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
