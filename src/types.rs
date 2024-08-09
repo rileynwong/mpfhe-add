@@ -223,10 +223,11 @@ impl CircuitOutput {
     }
 
     /// For each output word, a user generates its decryption share
-    pub fn gen_decryption_shares(&self, ck: &ClientKey) -> Vec<DecryptionShare> {
+    pub fn gen_decryption_shares(&self, ck: &ClientKey) -> Vec<AnnotatedDecryptionShare> {
         self.cells
             .iter()
-            .map(|word| gen_decryption_shares(ck, word))
+            .enumerate()
+            .map(|(cell_id, word)| (cell_id, gen_decryption_shares(ck, word)))
             .collect_vec()
     }
 
