@@ -286,15 +286,13 @@ async fn cmd_download_output(
 
     println!("Generating my decrypting shares");
     let mut shares = HashMap::new();
-    let my_decryption_shares: Vec<DecryptionShare> = fhe_out.gen_decryption_shares(ck);
-    let mut my_decryption_shares_2: Vec<AnnotatedDecryptionShare> = vec![];
-    for (out_id, share) in my_decryption_shares.iter().enumerate() {
-        shares.insert((out_id, *user_id), share.to_vec());
-        my_decryption_shares_2.push((out_id, share.clone()));
+    let my_decryption_shares: Vec<AnnotatedDecryptionShare> = fhe_out.gen_decryption_shares(ck);
+    for (out_id, share) in my_decryption_shares.iter() {
+        shares.insert((*out_id, *user_id), share.to_vec());
     }
     println!("Submitting my decrypting shares");
     client
-        .submit_decryption_shares(*user_id, &my_decryption_shares_2)
+        .submit_decryption_shares(*user_id, &my_decryption_shares)
         .await?;
     Ok((fhe_out, shares))
 }
