@@ -30,7 +30,7 @@ struct User {
     // step 3: gen key and cipher
     server_key: Option<ServerKeyShare>,
     // step 4: get FHE output
-    fhe_out: Option<CircuitOutput>,
+    fhe_out: Option<Vec<Word>>,
     // step 5: derive decryption shares
     decryption_shares: DecryptionSharesMap,
 }
@@ -84,7 +84,7 @@ impl User {
         self
     }
 
-    fn set_fhe_out(&mut self, fhe_out: CircuitOutput) -> &mut Self {
+    fn set_fhe_out(&mut self, fhe_out: Vec<Word>) -> &mut Self {
         self.fhe_out = Some(fhe_out);
         self
     }
