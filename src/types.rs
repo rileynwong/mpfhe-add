@@ -33,6 +33,9 @@ pub(crate) type CircuitInput = Vec<Word>;
 /// Decryption share for a word from one user.
 pub(crate) type DecryptionShare = Vec<u64>;
 
+/// Decryption share with output id
+pub(crate) type AnnotatedDecryptionShare = (usize, DecryptionShare);
+
 pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 
 pub const BOARD_DIM: usize = 4; // board size is BOARD_DIM * BOARD_DIM
@@ -427,7 +430,7 @@ pub(crate) struct UserRecord {
 pub(crate) enum UserStorage {
     Empty,
     Sks(Box<ServerKeyShare>),
-    DecryptionShare(Option<Vec<DecryptionShare>>),
+    DecryptionShare(Option<Vec<AnnotatedDecryptionShare>>),
 }
 
 impl UserStorage {
@@ -440,7 +443,7 @@ impl UserStorage {
 
     pub(crate) fn get_mut_decryption_shares(
         &mut self,
-    ) -> Option<&mut Option<Vec<DecryptionShare>>> {
+    ) -> Option<&mut Option<Vec<AnnotatedDecryptionShare>>> {
         match self {
             Self::DecryptionShare(ds) => Some(ds),
             _ => None,
@@ -463,7 +466,7 @@ pub(crate) struct SksSubmission {
 pub(crate) struct DecryptionShareSubmission {
     pub(crate) user_id: UserId,
     /// The user sends decryption share for each [`Word`].
-    pub(crate) decryption_shares: Vec<DecryptionShare>,
+    pub(crate) decryption_shares: Vec<AnnotatedDecryptionShare>,
 }
 
 pub fn u64_to_binary<const N: usize>(v: u64) -> [bool; N] {

@@ -6,7 +6,7 @@ use crate::types::{
     GameStateEnc, MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId,
     UserStorage,
 };
-use crate::{UserAction, Word};
+use crate::{AnnotatedDecryptionShare, UserAction, Word};
 use phantom_zone::{set_common_reference_seed, set_parameter_set};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
@@ -198,7 +198,7 @@ async fn get_decryption_share(
     fhe_output_id: usize,
     user_id: UserId,
     ss: &State<MutexServerStorage>,
-) -> Result<Json<DecryptionShare>, ErrorResponse> {
+) -> Result<Json<AnnotatedDecryptionShare>, ErrorResponse> {
     let mut ss: tokio::sync::MutexGuard<ServerStorage> = ss.lock().await;
     let decryption_shares = ss
         .get_user(user_id)?

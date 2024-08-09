@@ -1,10 +1,8 @@
 use crate::{
-    dashboard::{Dashboard, RegisteredUser},
-    types::{
+    dashboard::{Dashboard, RegisteredUser}, types::{
         CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Seed,
         ServerKeyShare, ServerState, SksSubmission, UserAction, UserId, Word,
-    },
-    ClientKey, Direction,
+    }, AnnotatedDecryptionShare, ClientKey, Direction
 };
 use anyhow::{anyhow, bail, Error};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -216,7 +214,7 @@ impl WebClient {
     pub async fn submit_decryption_shares(
         &self,
         user_id: usize,
-        decryption_shares: &[DecryptionShare],
+        decryption_shares: &[AnnotatedDecryptionShare],
     ) -> Result<UserId, Error> {
         let submission = DecryptionShareSubmission {
             user_id,
