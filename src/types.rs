@@ -34,7 +34,7 @@ pub(crate) type CircuitInput = Vec<Word>;
 pub type DecryptionShare = Vec<u64>;
 
 /// Decryption share with output id
-pub(crate) type AnnotatedDecryptionShare = (usize, DecryptionShare);
+pub type AnnotatedDecryptionShare = (usize, DecryptionShare);
 
 pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 
@@ -214,24 +214,24 @@ fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitOutput {
     /// Computed karma balance of all users
-    karma_balance: Vec<Word>,
+    cells: Vec<Word>,
 }
 
 impl CircuitOutput {
-    pub(crate) fn new(karma_balance: Vec<Word>) -> Self {
-        Self { karma_balance }
+    pub(crate) fn new(cells: Vec<Word>) -> Self {
+        Self { cells }
     }
 
     /// For each output word, a user generates its decryption share
     pub fn gen_decryption_shares(&self, ck: &ClientKey) -> Vec<DecryptionShare> {
-        self.karma_balance
+        self.cells
             .iter()
             .map(|word| gen_decryption_shares(ck, word))
             .collect_vec()
     }
 
     pub fn decrypt(&self, ck: &ClientKey, dss: &[Vec<DecryptionShare>]) -> Vec<PlainWord> {
-        self.karma_balance
+        self.cells
             .iter()
             .zip_eq(dss)
             .map(|(word, shares)| decrypt_word(ck, word, shares))
@@ -240,7 +240,7 @@ impl CircuitOutput {
 
     /// Get number of outputs
     pub fn n(&self) -> usize {
-        self.karma_balance.len()
+        self.cells.len()
     }
 }
 
@@ -354,7 +354,7 @@ pub(crate) struct ServerStorage {
 
     pub(crate) game_state: Option<GameStateEnc>,
     pub(crate) action_queue: Vec<(UserId, UserAction<Word>)>,
-    pub(crate) cells: Option<Vec<Word>>,
+    pub(crate) cells: Option<CircuitOutput>,
 }
 
 impl ServerStorage {

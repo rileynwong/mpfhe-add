@@ -147,6 +147,7 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                 let cells = get_cells(&final_game_state, 4);
                                 let mut ss = s2.blocking_lock();
                                 ss.game_state = Some(final_game_state);
+                                let cells = CircuitOutput::new(cells);
                                 ss.cells = Some(cells);
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
@@ -169,7 +170,9 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
 }
 
 #[get("/fhe_output")]
-async fn get_fhe_output(ss: &State<MutexServerStorage>) -> Result<Json<Vec<Word>>, ErrorResponse> {
+async fn get_fhe_output(
+    ss: &State<MutexServerStorage>,
+) -> Result<Json<CircuitOutput>, ErrorResponse> {
     let ss = ss.lock().await;
     ss.ensure(ServerState::CompletedFhe)?;
     let cells = ss.cells.clone().ok_or(Error::CellNotFound)?;
