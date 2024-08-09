@@ -31,29 +31,11 @@ pub(crate) type CircuitInput = Vec<Word>;
 /// Decryption share for a word from one user.
 pub(crate) type DecryptionShare = Vec<u64>;
 
-pub type Coord = u8;
-
-type PlainWord = i16;
 pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
-
-fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
-    let mut result = [false; N];
-    for i in 0..N / 2 {
-        if (x >> i) & 1 == 1 {
-            result[i] = true;
-        }
-    }
-    for i in N / 2..N {
-        if (y >> i) & 1 == 1 {
-            result[i] = true;
-        }
-    }
-    result
-}
 
 pub struct GameState {
     /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
-    coords: Vec<(u8, u8)>,
+    coords: Vec<PlainCoord>,
     /// example: [false; BOARD_SIZE];
     eggs: Vec<bool>,
 }
@@ -72,11 +54,11 @@ pub struct PlainCoord {
 }
 
 impl PlainCoord {
-    fn new(x: u8, y: u8) -> PlainCoord {
+    pub fn new(x: u8, y: u8) -> PlainCoord {
         PlainCoord { x: x, y: y }
     }
 
-    fn from_binnary<const N: usize>(coords: &[bool]) -> PlainCoord {
+    pub fn from_binnary<const N: usize>(coords: &[bool]) -> PlainCoord {
         let mut x = 0u8;
         let mut y = 0u8;
         for i in (0..N / 2).rev() {
@@ -88,7 +70,7 @@ impl PlainCoord {
         return PlainCoord { x: x, y: y };
     }
 
-    fn to_binary<const N: usize>(&self) -> [bool; N] {
+    pub fn to_binary<const N: usize>(&self) -> [bool; N] {
         let mut result = [false; N];
         for i in 0..N / 2 {
             if (self.x >> i) & 1 == 1 {
@@ -131,14 +113,6 @@ impl<T> Display for UserAction<T> {
 }
 
 impl UserAction<EncryptedWord> {
-    pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
-        todo!();
-        let cipher = karma
-            .iter()
-            .map(|score| encrypt_plain(ck, *score))
-            .collect_vec();
-    }
-
     pub fn set_starting_coords(ck: &ClientKey, coords: &[(u8, u8)]) -> Self {
         let starting_coords = coords
             .iter()
@@ -184,11 +158,8 @@ impl UserAction<EncryptedWord> {
     }
 }
 
-impl UserAction<Word> {}
-
-fn encrypt_plain(ck: &ClientKey, plain: PlainWord) -> EncryptedWord {
-    let plain = u64_to_binary::<32>(plain as u64);
-    ck.encrypt(plain.as_slice())
+pub fn encrypt_plain(ck: &ClientKey, plain: &[bool]) -> EncryptedWord {
+    ck.encrypt(plain)
 }
 
 fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {

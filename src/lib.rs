@@ -9,7 +9,7 @@ pub use client::WebClient;
 pub use server::{rocket, setup};
 pub use types::{
     recover, u64_to_binary, CircuitOutput, ClientKey, DecryptionSharesMap, ServerState, UserAction,
-    UserId, *,
+    UserId,
 };
 
 #[cfg(test)]

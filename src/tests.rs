@@ -25,11 +25,11 @@ struct User {
     // step 1: get userID
     id: Option<UserId>,
     total_users: Option<usize>,
-    // step 2: assign scores
-    scores: Option<Vec<Score>>,
+    // step 2: assign starting coordinates
+    starting_coords: Option<PlainCoord>,
     // step 3: gen key and cipher
     server_key: Option<ServerKeyShare>,
-    cipher: Option<UserAction>,
+    coords_cipher: Option<UserAction>,
     // step 4: get FHE output
     fhe_out: Option<CircuitOutput>,
     // step 5: derive decryption shares
@@ -44,9 +44,9 @@ impl User {
             ck: None,
             id: None,
             total_users: None,
-            scores: None,
+            starting_coords: None,
             server_key: None,
-            cipher: None,
+            coords_cipher: None,
             fhe_out: None,
             decryption_shares: HashMap::new(),
         }
@@ -70,17 +70,16 @@ impl User {
         self.total_users = Some(total_users);
         self
     }
-    fn assign_scores(&mut self, scores: &[Score]) -> &mut Self {
-        self.scores = Some(scores.to_vec());
+    fn assign_starting_coords(&mut self, coords: PlainCoord) -> &mut Self {
+        self.starting_coords = Some(coords);
         self
     }
 
-    fn gen_cipher(&mut self) -> &mut Self {
-        let scores = self.scores.as_ref().unwrap().to_vec();
-        let ck: &ClientKey = self.ck.as_ref().unwrap();
-
-        let cipher = UserAction::from_plain(ck, &scores);
-        self.cipher = Some(cipher);
+    fn gen_coords_cipher(&mut self) -> &mut Self {
+        let ck = self.ck.as_ref().unwrap();
+        let coords = self.starting_coords.unwrap().to_binary();
+        let cipher = encrypt_plain(ck, &coords);
+        self.coords_cipher = Some(cipher);
         self
     }
 
@@ -176,34 +175,36 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
         let reg = client.register(&user.name).await.unwrap();
         user.set_id(reg.id);
     }
-    // Conclude the registration
-    client.conclude_registration().await.unwrap();
 
     for user in users.iter_mut() {
         let dashboard = client.get_dashboard().await.unwrap();
         user.set_total_users(dashboard.get_names().len());
     }
 
-    // Assign scores
-    for user in users.iter_mut() {
-        let scores: Vec<Score> = (0..total_users.try_into().unwrap()).collect_vec();
-        user.assign_scores(&scores);
+    // let mut correct_output = vec![];
+    // for (my_id, me) in users.iter().enumerate() {
+    //     let given_out = me.scores.as_ref().unwrap().iter().sum::<Score>();
+    //     let mut received = 0;
+    //     for other in users.iter() {
+    //         received += other.scores.as_ref().unwrap()[my_id];
+    //     }
+    //     correct_output.push(received.wrapping_sub(given_out))
+    // }
+
+    println!("generate and submit server key share");
+
+    // Assign starting coords
+    let users_coords = vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)];
+    for (i, user) in users.iter_mut().enumerate() {
+        let starting_coords = PlainCoord::new(users_coords[i].0, users_coords[i].1);
+        user.assign_starting_coords(starting_coords);
     }
 
-    let mut correct_output = vec![];
-    for (my_id, me) in users.iter().enumerate() {
-        let given_out = me.scores.as_ref().unwrap().iter().sum::<Score>();
-        let mut received = 0;
-        for other in users.iter() {
-            received += other.scores.as_ref().unwrap()[my_id];
-        }
-        correct_output.push(received.wrapping_sub(given_out))
-    }
-
+    // Generate server key share
     users.par_iter_mut().for_each(|user| {
         set_parameter_set(PARAMETER);
         println!("{} Gen cipher", user.name);
-        user.gen_cipher();
+        user.gen_coords_cipher();
         time!(
             || {
                 user.gen_server_key_share();
@@ -223,11 +224,26 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
             println!("cipher_text size {}", cipher_text.len());
             println!("sks size {}", sks.len());
         }
-        println!("Submit cipher and server key");
+        println!("Submit server key");
         client.submit_sks(user_id, &sks).await.unwrap();
         // Drop here to save mem
         user.server_key = None;
     }
+
+    println!("assgin starting coordinates");
+
+    // Assign starting coords
+    for user in users.iter_mut() {
+        let coords = vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)];
+        let starting_coords: Vec<PlainCoord> = coords
+            .iter()
+            .map(|c| PlainCoord { x: c.0, y: c.1 })
+            .collect();
+        user.assign_starting_coords(&starting_coords);
+    }
+
+    // User 0 call init_game
+    // client.init_game(user_id, initial_eggs)
 
     // Admin runs the FHE computation
     client.trigger_fhe_run().await.unwrap();
