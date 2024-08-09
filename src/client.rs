@@ -4,7 +4,7 @@ use crate::{
         CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Seed,
         ServerKeyShare, ServerState, SksSubmission, UserAction, UserId, Word,
     },
-    ClientKey,
+    ClientKey, Direction,
 };
 use anyhow::{anyhow, bail, Error};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -152,12 +152,11 @@ impl WebClient {
     /// This function can only be called by user 0
     pub async fn init_game(
         &self,
+        ck: &ClientKey,
         user_id: UserId,
-        initial_eggs: &EncryptedWord,
+        initial_eggs: &[bool],
     ) -> Result<UserId, Error> {
-        let action = UserAction::InitGame {
-            initial_eggs: initial_eggs.clone(),
-        };
+        let action = UserAction::init_game(ck, initial_eggs);
         self.request_action(user_id, &action).await
     }
 
@@ -176,49 +175,26 @@ impl WebClient {
 
     pub async fn move_player(
         &self,
+        ck: &ClientKey,
         user_id: UserId,
-        coords: EncryptedWord,
-        direction: EncryptedWord,
+        direction: Direction,
     ) -> Result<UserId, Error> {
-        let action = UserAction::MovePlayer { coords, direction };
+        let action = UserAction::move_player(ck, direction);
         self.request_action(user_id, &action).await
     }
 
-    pub async fn lay_egg(
-        &self,
-        user_id: UserId,
-        coords: EncryptedWord,
-        eggs: EncryptedWord,
-    ) -> Result<UserId, Error> {
-        let action = UserAction::LayEgg { coords, eggs };
-        self.request_action(user_id, &action).await
+    pub async fn lay_egg(&self, user_id: UserId) -> Result<UserId, Error> {
+        self.request_action(user_id, &UserAction::LayEgg).await
     }
 
-    pub async fn pickup_egg(
-        &self,
-        user_id: UserId,
-        coords: EncryptedWord,
-        eggs: EncryptedWord,
-    ) -> Result<UserId, Error> {
-        let action = UserAction::PickupEgg { coords, eggs };
-        self.request_action(user_id, &action).await
+    pub async fn pickup_egg(&self, user_id: UserId) -> Result<UserId, Error> {
+        self.request_action(user_id, &UserAction::PickupEgg).await
     }
 
     /// After the actions submitted from all users,
     /// they can call get_cell
-    pub async fn get_cell(
-        &self,
-        user_id: usize,
-        coords: EncryptedWord,
-        eggs: EncryptedWord,
-        players: EncryptedWord,
-    ) -> Result<UserId, Error> {
-        let action = UserAction::GetCell {
-            coords,
-            eggs,
-            players,
-        };
-        self.request_action(user_id, &action).await
+    pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {
+        self.request_action(user_id, &UserAction::GetCell).await
     }
 
     // After get_cell, need to decrypt the result

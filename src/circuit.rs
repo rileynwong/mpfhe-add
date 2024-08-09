@@ -51,14 +51,14 @@ pub(crate) fn apply_action(
 ) -> GameStateEnc {
     let mut next_state = state.clone();
     match ua {
-        UserAction::MovePlayer { coords, direction } => {
-            next_state.coords[user_id] = move_player(&coords, &direction);
+        UserAction::MovePlayer { direction } => {
+            next_state.coords[user_id] = move_player(&state.coords[user_id], &direction);
         }
-        UserAction::LayEgg { coords, eggs } => {
-            next_state.eggs = lay_egg(&coords, &eggs);
+        UserAction::LayEgg => {
+            next_state.eggs = lay_egg(&state.coords[user_id], &state.eggs);
         }
-        UserAction::PickupEgg { coords, eggs } => {
-            next_state.eggs = pickup_egg(&coords, &eggs);
+        UserAction::PickupEgg => {
+            next_state.eggs = pickup_egg(&state.coords[user_id], &state.eggs);
         }
         UserAction::InitGame { .. }
         | UserAction::SetStartingCoords { .. }

@@ -16,6 +16,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub type Score = i16;
+/// It is here for the build
+type PlainWord = i16;
 
 pub type ClientKey = phantom_zone::ClientKey;
 pub type UserId = usize;
@@ -32,6 +34,41 @@ pub(crate) type CircuitInput = Vec<Word>;
 pub(crate) type DecryptionShare = Vec<u64>;
 
 pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
+
+#[derive(Copy, Clone)]
+#[repr(u8)]
+pub enum Direction {
+    Up = 0,
+    Down,
+    Left,
+    Right,
+}
+
+fn u8_to_binary<const N: usize>(v: u8) -> [bool; N] {
+    assert!((v as u16) < 2u16.pow(N as u32));
+    let mut result = [false; N];
+    for i in 0..N {
+        if (v >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    result
+}
+
+fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
+    let mut result = [false; N];
+    for i in 0..N / 2 {
+        if (x >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    for i in N / 2..N {
+        if (y >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    result
+}
 
 pub struct GameState {
     /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
@@ -92,10 +129,10 @@ impl PlainCoord {
 pub enum UserAction<T> {
     InitGame { initial_eggs: T },
     SetStartingCoords { starting_coords: Vec<T> },
-    MovePlayer { coords: T, direction: T },
-    LayEgg { coords: T, eggs: T },
-    PickupEgg { coords: T, eggs: T },
-    GetCell { coords: T, eggs: T, players: T },
+    MovePlayer { direction: T },
+    LayEgg,
+    PickupEgg,
+    GetCell,
 }
 
 impl<T> Display for UserAction<T> {
@@ -113,6 +150,14 @@ impl<T> Display for UserAction<T> {
 }
 
 impl UserAction<EncryptedWord> {
+    pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
+        todo!();
+    }
+    pub fn init_game(ck: &ClientKey, initial_eggs: &[bool]) -> Self {
+        let initial_eggs = ck.encrypt(initial_eggs);
+        Self::InitGame { initial_eggs }
+    }
+
     pub fn set_starting_coords(ck: &ClientKey, coords: &[(u8, u8)]) -> Self {
         let starting_coords = coords
             .iter()
@@ -122,8 +167,15 @@ impl UserAction<EncryptedWord> {
         Self::SetStartingCoords { starting_coords }
     }
 
+    pub fn move_player(ck: &ClientKey, direction: Direction) -> Self {
+        let direction = u8_to_binary::<8>(direction as u8);
+        Self::MovePlayer {
+            direction: ck.encrypt(direction.as_slice()),
+        }
+    }
+
     pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
-        match self {
+        match &self {
             UserAction::InitGame { initial_eggs } => UserAction::InitGame {
                 initial_eggs: unpack_word(initial_eggs, user_id),
             },
@@ -133,27 +185,12 @@ impl UserAction<EncryptedWord> {
                     .map(|word| unpack_word(word, user_id))
                     .collect_vec(),
             },
-            UserAction::MovePlayer { coords, direction } => UserAction::MovePlayer {
-                coords: unpack_word(coords, user_id),
+            UserAction::MovePlayer { direction } => UserAction::MovePlayer {
                 direction: unpack_word(direction, user_id),
             },
-            UserAction::LayEgg { coords, eggs } => UserAction::LayEgg {
-                coords: unpack_word(coords, user_id),
-                eggs: unpack_word(eggs, user_id),
-            },
-            UserAction::PickupEgg { coords, eggs } => UserAction::PickupEgg {
-                coords: unpack_word(coords, user_id),
-                eggs: unpack_word(eggs, user_id),
-            },
-            UserAction::GetCell {
-                coords,
-                eggs,
-                players,
-            } => UserAction::GetCell {
-                coords: unpack_word(coords, user_id),
-                eggs: unpack_word(eggs, user_id),
-                players: unpack_word(players, user_id),
-            },
+            UserAction::LayEgg => UserAction::LayEgg,
+            UserAction::PickupEgg => UserAction::PickupEgg,
+            UserAction::GetCell => UserAction::GetCell,
         }
     }
 }
