@@ -15,7 +15,6 @@ use std::fmt::Display;
 use std::sync::Arc;
 use thiserror::Error;
 
-pub type Score = PlainWord;
 pub type ClientKey = phantom_zone::ClientKey;
 pub type UserId = usize;
 
@@ -32,6 +31,46 @@ pub(crate) type DecryptionShare = Vec<u64>;
 
 type PlainWord = i16;
 type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+pub struct PlainCoord {
+    pub x: u8,
+    pub y: u8,
+}
+
+impl PlainCoord {
+    fn new(x: u8, y: u8) -> PlainCoord {
+        PlainCoord { x: x, y: y }
+    }
+
+    fn from_binnary<const N: usize>(coords: &[bool]) -> PlainCoord {
+        let mut x = 0u8;
+        let mut y = 0u8;
+        for i in (0..N / 2).rev() {
+            x = (x << 1) + coords[i] as u8;
+        }
+        for i in (N / 2..N).rev() {
+            y = (y << 1) + coords[i] as u8;
+        }
+        return PlainCoord { x: x, y: y };
+    }
+
+    fn to_binary<const N: usize>(&self) -> [bool; N] {
+        let mut result = [false; N];
+        for i in 0..N / 2 {
+            if (self.x >> i) & 1 == 1 {
+                result[i] = true;
+            }
+        }
+        for i in N / 2..N {
+            if (self.y >> i) & 1 == 1 {
+                result[i] = true;
+            }
+        }
+        result
+    }
+}
 
 /// Encrypted input words contributed from one user
 #[derive(Debug, Clone, Serialize, Deserialize)]
