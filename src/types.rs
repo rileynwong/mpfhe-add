@@ -28,10 +28,10 @@ pub(crate) type ServerKeyShare = CommonReferenceSeededNonInteractiveMultiPartySe
     BoolParameters<u64>,
     NonInteractiveMultiPartyCrs<Seed>,
 >;
-pub(crate) type Word = Vec<FheBool>;
+pub type Word = Vec<FheBool>;
 pub(crate) type CircuitInput = Vec<Word>;
 /// Decryption share for a word from one user.
-pub(crate) type DecryptionShare = Vec<u64>;
+pub type DecryptionShare = Vec<u64>;
 
 /// Decryption share with output id
 pub(crate) type AnnotatedDecryptionShare = (usize, DecryptionShare);
@@ -244,7 +244,7 @@ impl CircuitOutput {
     }
 }
 
-fn gen_decryption_shares(ck: &ClientKey, fhe_output: &Word) -> DecryptionShare {
+pub fn gen_decryption_shares(ck: &ClientKey, fhe_output: &Word) -> DecryptionShare {
     let dec_shares = fhe_output
         .iter()
         .map(|out_bit| ck.gen_decryption_share(out_bit))

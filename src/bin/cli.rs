@@ -2,8 +2,8 @@ use anyhow::{anyhow, bail, ensure, Error};
 use clap::{command, Parser};
 use itertools::Itertools;
 use karma_calculator::{
-    setup, CircuitOutput, DecryptionSharesMap, UserAction, Score, ServerState, UserId,
-    WebClient,
+    gen_decryption_shares, setup, CircuitOutput, DecryptionShare, DecryptionSharesMap, Score,
+    ServerState, UserAction, UserId, WebClient, Word,
 };
 use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
 use rustyline::{error::ReadlineError, DefaultEditor};
@@ -135,7 +135,7 @@ struct StateDownloadedOuput {
     ck: ClientKey,
     names: Vec<String>,
     scores: Vec<Score>,
-    fhe_out: CircuitOutput,
+    fhe_out: Vec<Word>,
     shares: DecryptionSharesMap,
 }
 
@@ -275,7 +275,7 @@ async fn cmd_download_output(
     client: &WebClient,
     user_id: &UserId,
     ck: &ClientKey,
-) -> Result<(CircuitOutput, HashMap<(usize, UserId), Vec<u64>>), Error> {
+) -> Result<(Vec<Word>, HashMap<(usize, UserId), Vec<u64>>), Error> {
     let resp = client.trigger_fhe_run().await?;
     if !matches!(resp, ServerState::CompletedFhe) {
         bail!("FHE is still running")
@@ -286,13 +286,18 @@ async fn cmd_download_output(
 
     println!("Generating my decrypting shares");
     let mut shares = HashMap::new();
-    let my_decryption_shares = fhe_out.gen_decryption_shares(ck);
+    let my_decryption_shares: Vec<DecryptionShare> = fhe_out
+        .iter()
+        .map(|word| gen_decryption_shares(ck, word))
+        .collect_vec();
+    let my_decryption_shares_2 = vec![];
     for (out_id, share) in my_decryption_shares.iter().enumerate() {
         shares.insert((out_id, *user_id), share.to_vec());
+        my_decryption_shares_2.push((out_id, share));
     }
     println!("Submitting my decrypting shares");
     client
-        .submit_decryption_shares(*user_id, &my_decryption_shares)
+        .submit_decryption_shares(*user_id, &my_decryption_shares_2)
         .await?;
     Ok((fhe_out, shares))
 }
@@ -302,7 +307,7 @@ async fn cmd_download_shares(
     names: &[String],
     ck: &ClientKey,
     shares: &mut HashMap<(usize, usize), Vec<u64>>,
-    co: &CircuitOutput,
+    co: &Vec<Word>,
     scores: &[Score],
 ) -> Result<Vec<Score>, Error> {
     let total_users = names.len();

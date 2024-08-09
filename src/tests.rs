@@ -94,7 +94,10 @@ impl User {
         let fhe_out = self.fhe_out.as_ref().expect("exists");
         let my_id = self.id.expect("exists");
 
-        let my_decryption_shares = fhe_out.gen_decryption_shares(ck);
+        let my_decryption_shares = fhe_out
+            .iter()
+            .map(|word| gen_decryption_shares(ck, word))
+            .collect_vec();
         for (out_id, share) in my_decryption_shares.iter().enumerate() {
             self.decryption_shares
                 .insert((out_id, my_id), share.to_vec());
