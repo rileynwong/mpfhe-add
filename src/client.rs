@@ -209,7 +209,7 @@ impl WebClient {
         self.post_nobody("/run").await
     }
 
-    pub async fn get_fhe_output(&self) -> Result<CircuitOutput, Error> {
+    pub async fn get_fhe_output(&self) -> Result<Vec<Word>, Error> {
         self.get("/fhe_output").await
     }
 
