@@ -116,7 +116,6 @@ struct SubmittedInput {
     ck: ClientKey,
     user_id: UserId,
     names: Vec<String>,
-    scores: Vec<Score>,
 }
 
 struct StateTriggeredRun {
@@ -218,50 +217,18 @@ async fn cmd_conclude_registration(client: &WebClient) -> Result<Vec<String>, Er
     todo!()
 }
 
-async fn cmd_score_encrypt(
+async fn cmd_submit_sks(
     args: &[&str],
     client: &WebClient,
     user_id: &UserId,
     names: &Vec<String>,
     ck: &ClientKey,
-) -> Result<Vec<Score>, Error> {
-    let total_users = names.len();
-    let scores: Result<Vec<_>, Error> = args
-        .iter()
-        .map(|s| {
-            s.parse::<Score>()
-                .map_err(|err| anyhow::format_err!(err.to_string()))
-        })
-        .collect_vec()
-        .into_iter()
-        .collect();
-    let scores = scores?;
-    ensure!(
-        scores.len() == total_users,
-        "Mismatch scores and user number. Score: {}, users: {}",
-        scores.len(),
-        total_users
-    );
-    ensure!(
-        scores.iter().all(|&x| x <= MAX_INPUT_VALUE && x >= 0),
-        "All scores should be in range of 0 to {}. Scores: {:#?}",
-        MAX_INPUT_VALUE,
-        scores,
-    );
-    let total: Score = scores.iter().sum();
-    for (name, score) in zip(names, scores.iter()) {
-        println!("Give {name} {score} karma");
-    }
-    println!("I gave out {total} karma");
-
-    let ei = UserAction::from_plain(ck, &scores);
-
+) -> Result<(), Error> {
     println!("Generating server key share");
     let sks = gen_server_key_share(*user_id, total_users, ck);
-
     println!("Submit server key share");
     client.submit_sks(*user_id, &sks).await?;
-    Ok(scores)
+    Ok(())
 }
 
 async fn cmd_run(client: &WebClient) -> Result<(), Error> {
@@ -367,14 +334,13 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 Err(err) => Err((err, State::Setup(s))),
             },
             State::ConcludedRegistration(s) => {
-                match cmd_score_encrypt(args, &s.client, &s.user_id, &s.names, &s.ck).await {
+                match cmd_submit_sks(args, &s.client, &s.user_id, &s.names, &s.ck).await {
                     Ok(scores) => Ok(State::SubmittedInput(SubmittedInput {
                         name: s.name,
                         client: s.client,
                         ck: s.ck,
                         user_id: s.user_id,
                         names: s.names,
-                        scores,
                     })),
                     Err(err) => Err((err, State::ConcludedRegistration(s))),
                 }
@@ -438,20 +404,66 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 }))
             }
         }
-    } else if cmd == &"conclude" {
-        match state {
-            State::Setup(s) => match cmd_conclude_registration(&s.client).await {
-                Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
-                    name: s.name,
-                    client: s.client,
-                    ck: s.ck,
-                    user_id: s.user_id,
-                    names,
-                })),
-                Err(err) => Err((err, State::Setup(s))),
-            },
-            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-        }
+    } else if cmd == &"init" {
+        todo!()
+        // match state {
+        //     State::ConcludedRegistration(s) => match cmd_conclude_registration(&s.client).await {
+        //         Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
+        //             name: s.name,
+        //             client: s.client,
+        //             ck: s.ck,
+        //             user_id: s.user_id,
+        //             names,
+        //         })),
+        //         Err(err) => Err((err, State::Setup(s))),
+        //     },
+        //     _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        // }
+    } else if cmd == &"move" {
+        todo!()
+        // match state {
+        //     State::ConcludedRegistration(s) => match cmd_conclude_registration(&s.client).await {
+        //         Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
+        //             name: s.name,
+        //             client: s.client,
+        //             ck: s.ck,
+        //             user_id: s.user_id,
+        //             names,
+        //         })),
+        //         Err(err) => Err((err, State::Setup(s))),
+        //     },
+        //     _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        // }
+    } else if cmd == &"lay" {
+        todo!()
+        // match state {
+        //     State::ConcludedRegistration(s) => match cmd_conclude_registration(&s.client).await {
+        //         Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
+        //             name: s.name,
+        //             client: s.client,
+        //             ck: s.ck,
+        //             user_id: s.user_id,
+        //             names,
+        //         })),
+        //         Err(err) => Err((err, State::Setup(s))),
+        //     },
+        //     _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        // }
+    } else if cmd == &"pickup" {
+        todo!()
+        // match state {
+        //     State::ConcludedRegistration(s) => match cmd_conclude_registration(&s.client).await {
+        //         Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
+        //             name: s.name,
+        //             client: s.client,
+        //             ck: s.ck,
+        //             user_id: s.user_id,
+        //             names,
+        //         })),
+        //         Err(err) => Err((err, State::Setup(s))),
+        //     },
+        //     _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        // }
     } else if cmd == &"status" {
         match &state {
             State::Init(StateInit { client, .. })
