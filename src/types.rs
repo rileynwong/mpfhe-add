@@ -35,6 +35,9 @@ pub(crate) type DecryptionShare = Vec<u64>;
 
 pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 
+pub const BOARD_DIM: usize = 4; // board size is BOARD_DIM * BOARD_DIM
+pub const BOARD_SIZE: usize = BOARD_DIM * BOARD_DIM;
+
 #[derive(Copy, Clone)]
 #[repr(u8)]
 pub enum Direction {

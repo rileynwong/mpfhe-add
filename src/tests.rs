@@ -26,10 +26,9 @@ struct User {
     id: Option<UserId>,
     total_users: Option<usize>,
     // step 2: assign starting coordinates
-    starting_coords: Option<PlainCoord>,
+    starting_coords: Option<(u8, u8)>,
     // step 3: gen key and cipher
     server_key: Option<ServerKeyShare>,
-    coords_cipher: Option<UserAction>,
     // step 4: get FHE output
     fhe_out: Option<CircuitOutput>,
     // step 5: derive decryption shares
@@ -46,7 +45,6 @@ impl User {
             total_users: None,
             starting_coords: None,
             server_key: None,
-            coords_cipher: None,
             fhe_out: None,
             decryption_shares: HashMap::new(),
         }
@@ -70,16 +68,9 @@ impl User {
         self.total_users = Some(total_users);
         self
     }
-    fn assign_starting_coords(&mut self, coords: PlainCoord) -> &mut Self {
-        self.starting_coords = Some(coords);
-        self
-    }
 
-    fn gen_coords_cipher(&mut self) -> &mut Self {
-        let ck = self.ck.as_ref().unwrap();
-        let coords = self.starting_coords.unwrap().to_binary();
-        let cipher = encrypt_plain(ck, &coords);
-        self.coords_cipher = Some(cipher);
+    fn assign_starting_coords(&mut self, coords: &(u8, u8)) -> &mut Self {
+        self.starting_coords = Some(coords.clone());
         self
     }
 
@@ -181,69 +172,66 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
         user.set_total_users(dashboard.get_names().len());
     }
 
-    // let mut correct_output = vec![];
-    // for (my_id, me) in users.iter().enumerate() {
-    //     let given_out = me.scores.as_ref().unwrap().iter().sum::<Score>();
-    //     let mut received = 0;
-    //     for other in users.iter() {
-    //         received += other.scores.as_ref().unwrap()[my_id];
-    //     }
-    //     correct_output.push(received.wrapping_sub(given_out))
-    // }
-
     println!("generate and submit server key share");
 
-    // Assign starting coords
-    let users_coords = vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)];
-    for (i, user) in users.iter_mut().enumerate() {
-        let starting_coords = PlainCoord::new(users_coords[i].0, users_coords[i].1);
-        user.assign_starting_coords(starting_coords);
-    }
-
-    // Generate server key share
-    users.par_iter_mut().for_each(|user| {
+    // Generate and submit server key share
+    for user in users.iter_mut() {
         set_parameter_set(PARAMETER);
         println!("{} Gen cipher", user.name);
-        user.gen_coords_cipher();
+
         time!(
             || {
                 user.gen_server_key_share();
             },
             format!("{} Gen server key share", user.name)
         );
-        println!("{} submit key and cipher", user.name);
-    });
 
-    for user in users.iter_mut() {
         let user_id = user.id.unwrap();
-        let cipher_text = user.cipher.as_ref().unwrap();
         let sks = user.server_key.as_ref().unwrap();
         if user_id == 0 {
-            let cipher_text = msgpack::to_vec(cipher_text).unwrap();
             let sks = msgpack::to_vec(sks).unwrap();
-            println!("cipher_text size {}", cipher_text.len());
             println!("sks size {}", sks.len());
         }
-        println!("Submit server key");
+
+        println!("{} Submit server key", user.name);
         client.submit_sks(user_id, &sks).await.unwrap();
         // Drop here to save mem
         user.server_key = None;
     }
 
-    println!("assgin starting coordinates");
+    println!("user 0 calls init game");
+
+    // User 0 encrypt initial eggs
+    let initial_eggs = [false; BOARD_SIZE];
+    let ck = users[0].ck.as_ref().unwrap();
+    client.init_game(ck, 0, &initial_eggs);
+
+    println!("users call set starting coords");
 
     // Assign starting coords
-    for user in users.iter_mut() {
-        let coords = vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)];
-        let starting_coords: Vec<PlainCoord> = coords
-            .iter()
-            .map(|c| PlainCoord { x: c.0, y: c.1 })
-            .collect();
-        user.assign_starting_coords(&starting_coords);
+    let users_coords = vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)];
+    for (i, user) in users.iter_mut().enumerate() {
+        user.assign_starting_coords(&users_coords[i]);
     }
 
-    // User 0 call init_game
-    // client.init_game(user_id, initial_eggs)
+    for (i, user) in users.iter_mut().enumerate() {
+        let ck = users[i].ck.as_ref().unwrap();
+        client.set_starting_coords(ck, i, &[user.starting_coords.unwrap()]);
+    }
+
+    println!("round start");
+    println!("each user submit an action");
+
+    let directions = vec![
+        Direction::Up,
+        Direction::Down,
+        Direction::Left,
+        Direction::Right,
+    ];
+    for (i, user) in users.iter_mut().enumerate() {
+        let ck = users[i].ck.as_ref().unwrap();
+        client.move_player(ck, i, directions[i]);
+    }
 
     // Admin runs the FHE computation
     client.trigger_fhe_run().await.unwrap();
