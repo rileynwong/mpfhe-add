@@ -16,6 +16,8 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub type Score = i16;
+/// It is here for the build
+type PlainWord = i16;
 
 pub type ClientKey = phantom_zone::ClientKey;
 pub type UserId = usize;
@@ -150,10 +152,6 @@ impl<T> Display for UserAction<T> {
 impl UserAction<EncryptedWord> {
     pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
         todo!();
-        let cipher = karma
-            .iter()
-            .map(|score| encrypt_plain(ck, *score))
-            .collect_vec();
     }
     pub fn init_game(ck: &ClientKey, initial_eggs: &[bool]) -> Self {
         let initial_eggs = ck.encrypt(initial_eggs);
