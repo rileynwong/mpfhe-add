@@ -45,6 +45,20 @@ pub enum UserAction<T> {
     GetCell { coords: T, eggs: T, players: T },
 }
 
+impl<T> Display for UserAction<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            UserAction::InitGame { .. } => "InitGame",
+            UserAction::SetStartingCoords { .. } => "SetStartingCoords",
+            UserAction::MovePlayer { .. } => "MovePlayer",
+            UserAction::LayEgg { .. } => "LayEgg",
+            UserAction::PickupEgg { .. } => "PickupEgg",
+            UserAction::GetCell { .. } => "GetCell",
+        };
+        write!(f, "{}", text)
+    }
+}
+
 impl UserAction<EncryptedWord> {
     pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
         todo!();

@@ -80,6 +80,7 @@ async fn request_action(
 
     ss.ensure(ServerState::ReadyForInputs)?;
     let user = ss.get_user(user_id)?;
+    println!("{} performed {}", user.name, action.to_string());
     let action = action.unpack(user_id);
     match action {
         UserAction::InitGame { initial_eggs } => {
@@ -91,7 +92,7 @@ async fn request_action(
         UserAction::MovePlayer { .. }
         | UserAction::LayEgg { .. }
         | UserAction::PickupEgg { .. }
-        | UserAction::GetCell { .. } => {}
+        | UserAction::GetCell { .. } => ss.action_queue.push(action),
     };
 
     Ok(Json(user_id))
