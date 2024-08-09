@@ -15,6 +15,8 @@ use std::fmt::Display;
 use std::sync::Arc;
 use thiserror::Error;
 
+pub type Score = i16;
+
 pub type ClientKey = phantom_zone::ClientKey;
 pub type UserId = usize;
 
@@ -107,7 +109,7 @@ impl PlainCoord {
 #[serde(crate = "rocket::serde")]
 pub enum UserAction<T> {
     InitGame { initial_eggs: T },
-    SetStartingCoords { starting_coords: T },
+    SetStartingCoords { starting_coords: Vec<T> },
     MovePlayer { coords: T, direction: T },
     LayEgg { coords: T, eggs: T },
     PickupEgg { coords: T, eggs: T },
@@ -136,13 +138,26 @@ impl UserAction<EncryptedWord> {
             .map(|score| encrypt_plain(ck, *score))
             .collect_vec();
     }
+
+    pub fn set_starting_coords(ck: &ClientKey, coords: &[(u8, u8)]) -> Self {
+        let starting_coords = coords
+            .iter()
+            .map(|(x, y)| ck.encrypt(coords_to_binary::<16>(*x, *y).as_slice()))
+            .collect_vec();
+
+        Self::SetStartingCoords { starting_coords }
+    }
+
     pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
         match self {
             UserAction::InitGame { initial_eggs } => UserAction::InitGame {
                 initial_eggs: unpack_word(initial_eggs, user_id),
             },
             UserAction::SetStartingCoords { starting_coords } => UserAction::SetStartingCoords {
-                starting_coords: unpack_word(starting_coords, user_id),
+                starting_coords: starting_coords
+                    .iter()
+                    .map(|word| unpack_word(word, user_id))
+                    .collect_vec(),
             },
             UserAction::MovePlayer { coords, direction } => UserAction::MovePlayer {
                 coords: unpack_word(coords, user_id),

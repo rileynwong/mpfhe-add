@@ -4,6 +4,7 @@ use crate::{
         CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Seed,
         ServerKeyShare, ServerState, SksSubmission, UserAction, UserId, Word,
     },
+    ClientKey,
 };
 use anyhow::{anyhow, bail, Error};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -162,12 +163,11 @@ impl WebClient {
 
     pub async fn set_starting_coords(
         &self,
+        ck: &ClientKey,
         user_id: UserId,
-        starting_coords: &EncryptedWord,
+        starting_coords: &[(u8, u8)],
     ) -> Result<UserId, Error> {
-        let action = UserAction::SetStartingCoords {
-            starting_coords: starting_coords.clone(),
-        };
+        let action = UserAction::set_starting_coords(ck, starting_coords);
         self.request_action(user_id, &action).await
     }
 

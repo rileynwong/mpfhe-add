@@ -3,7 +3,8 @@ use crate::dashboard::{Dashboard, RegisteredUser};
 
 use crate::types::{
     CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Error, ErrorResponse,
-    MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId, UserStorage,
+    GameStateEnc, MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId,
+    UserStorage,
 };
 use crate::UserAction;
 use phantom_zone::{set_common_reference_seed, set_parameter_set};
@@ -84,15 +85,31 @@ async fn request_action(
     let action = action.unpack(user_id);
     match action {
         UserAction::InitGame { initial_eggs } => {
-            ss.eggs = Some(initial_eggs);
+            match &mut ss.game_state {
+                Some(game_state) => game_state.eggs = initial_eggs,
+                None => {
+                    ss.game_state = Some(GameStateEnc {
+                        coords: vec![],
+                        eggs: initial_eggs,
+                    })
+                }
+            };
         }
         UserAction::SetStartingCoords { starting_coords } => {
-            ss.coords = Some(starting_coords);
+            match &mut ss.game_state {
+                Some(game_state) => game_state.coords = starting_coords,
+                None => {
+                    ss.game_state = Some(GameStateEnc {
+                        coords: starting_coords,
+                        eggs: vec![],
+                    })
+                }
+            };
         }
         UserAction::MovePlayer { .. }
         | UserAction::LayEgg { .. }
         | UserAction::PickupEgg { .. }
-        | UserAction::GetCell { .. } => ss.action_queue.push(action),
+        | UserAction::GetCell { .. } => ss.action_queue.push((user_id, action)),
     };
 
     Ok(Json(user_id))
