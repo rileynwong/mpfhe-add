@@ -152,12 +152,11 @@ impl WebClient {
     /// This function can only be called by user 0
     pub async fn init_game(
         &self,
+        ck: &ClientKey,
         user_id: UserId,
-        initial_eggs: &EncryptedWord,
+        initial_eggs: &[bool],
     ) -> Result<UserId, Error> {
-        let action = UserAction::InitGame {
-            initial_eggs: initial_eggs.clone(),
-        };
+        let action = UserAction::init_game(ck, initial_eggs);
         self.request_action(user_id, &action).await
     }
 

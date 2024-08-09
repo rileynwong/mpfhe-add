@@ -33,6 +33,30 @@ pub(crate) type DecryptionShare = Vec<u64>;
 
 pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 
+#[derive(Copy, Clone)]
+#[repr(u8)]
+enum Direction {
+    Up = 0,
+    Down,
+    Left,
+    Right,
+}
+
+fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
+    let mut result = [false; N];
+    for i in 0..N / 2 {
+        if (x >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    for i in N / 2..N {
+        if (y >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    result
+}
+
 pub struct GameState {
     /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
     coords: Vec<PlainCoord>,
@@ -113,6 +137,18 @@ impl<T> Display for UserAction<T> {
 }
 
 impl UserAction<EncryptedWord> {
+    pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
+        todo!();
+        let cipher = karma
+            .iter()
+            .map(|score| encrypt_plain(ck, *score))
+            .collect_vec();
+    }
+    pub fn init_game(ck: &ClientKey, initial_eggs: &[bool]) -> Self {
+        let initial_eggs = ck.encrypt(initial_eggs);
+        Self::InitGame { initial_eggs }
+    }
+
     pub fn set_starting_coords(ck: &ClientKey, coords: &[(u8, u8)]) -> Self {
         let starting_coords = coords
             .iter()
@@ -120,6 +156,10 @@ impl UserAction<EncryptedWord> {
             .collect_vec();
 
         Self::SetStartingCoords { starting_coords }
+    }
+
+    pub fn move_player(direction: Direction) -> Self {
+        Self::MovePlayer { direction: () }
     }
 
     pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
