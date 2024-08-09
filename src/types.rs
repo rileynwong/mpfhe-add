@@ -31,38 +31,21 @@ pub(crate) type CircuitInput = Vec<Word>;
 pub(crate) type DecryptionShare = Vec<u64>;
 
 type PlainWord = i16;
-type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
+pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 
 /// Encrypted input words contributed from one user
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
-pub enum UserAction {
-    InitGame {
-        initial_eggs: Word,
-    },
-    SetStartingCoords {
-        starting_coords: Word,
-    },
-    MovePlayer {
-        coords: Word,
-        direction: Word,
-    },
-    LayEgg {
-        coords: Word,
-        eggs: Word,
-    },
-    PickupEgg {
-        coords: Word,
-        eggs: Word,
-    },
-    GetCell {
-        coords: Word,
-        eggs: Word,
-        players: Word,
-    },
+pub enum UserAction<T> {
+    InitGame { initial_eggs: T },
+    SetStartingCoords { starting_coords: T },
+    MovePlayer { coords: T, direction: T },
+    LayEgg { coords: T, eggs: T },
+    PickupEgg { coords: T, eggs: T },
+    GetCell { coords: T, eggs: T, players: T },
 }
 
-impl UserAction {
+impl UserAction<EncryptedWord> {
     pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
         todo!();
         let cipher = karma
@@ -70,15 +53,47 @@ impl UserAction {
             .map(|score| encrypt_plain(ck, *score))
             .collect_vec();
     }
-
+    pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
+        match self {
+            UserAction::InitGame { initial_eggs } => UserAction::InitGame {
+                initial_eggs: unpack_word(initial_eggs, user_id),
+            },
+            UserAction::SetStartingCoords { starting_coords } => UserAction::SetStartingCoords {
+                starting_coords: unpack_word(starting_coords, user_id),
+            },
+            UserAction::MovePlayer { coords, direction } => UserAction::MovePlayer {
+                coords: unpack_word(coords, user_id),
+                direction: unpack_word(direction, user_id),
+            },
+            UserAction::LayEgg { coords, eggs } => UserAction::LayEgg {
+                coords: unpack_word(coords, user_id),
+                eggs: unpack_word(eggs, user_id),
+            },
+            UserAction::PickupEgg { coords, eggs } => UserAction::PickupEgg {
+                coords: unpack_word(coords, user_id),
+                eggs: unpack_word(eggs, user_id),
+            },
+            UserAction::GetCell {
+                coords,
+                eggs,
+                players,
+            } => UserAction::GetCell {
+                coords: unpack_word(coords, user_id),
+                eggs: unpack_word(eggs, user_id),
+                players: unpack_word(players, user_id),
+            },
+        }
+    }
 }
+
+impl UserAction<Word> {}
 
 fn encrypt_plain(ck: &ClientKey, plain: PlainWord) -> EncryptedWord {
     let plain = u64_to_binary::<32>(plain as u64);
     ck.encrypt(plain.as_slice())
 }
 
-fn unpack_word(word: EncryptedWord, user_id: UserId) -> Word {
+fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
     word.unseed::<Vec<Vec<u64>>>()
         .key_switch(user_id)
         .extract_all()
@@ -218,8 +233,12 @@ pub(crate) type MutexServerStorage = Arc<Mutex<ServerStorage>>;
 pub(crate) struct ServerStorage {
     pub(crate) seed: Seed,
     pub(crate) state: ServerState,
+    /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
+    pub(crate) coords: Option<Word>,
+    /// example: [false; BOARD_SIZE];
+    pub(crate) eggs: Option<Word>,
+    pub(crate) action_queue: Vec<UserAction<Word>>,
     pub(crate) users: Vec<UserRecord>,
-    pub(crate) fhe_outputs: Option<CircuitOutput>,
 }
 
 impl ServerStorage {
@@ -227,8 +246,10 @@ impl ServerStorage {
         Self {
             seed,
             state: ServerState::ReadyForJoining,
+            coords: None,
+            eggs: None,
             users: vec![],
-            fhe_outputs: None,
+            action_queue: vec![],
         }
     }
 

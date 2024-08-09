@@ -1,12 +1,12 @@
 use crate::{
     compiled::{get_cell, lay_egg, move_player, pickup_egg},
     time,
-    types::ServerKeyShare,
+    types::{ServerKeyShare, Word},
     UserAction,
 };
 use phantom_zone::{aggregate_server_key_shares, ParameterSelector};
 
-pub const PARAMETER: ParameterSelector = ParameterSelector::NonInteractiveLTE40PartyExperimental;
+pub const PARAMETER: ParameterSelector = ParameterSelector::NonInteractiveLTE4Party;
 
 /// Server work
 /// Warning: global variable change
@@ -18,7 +18,7 @@ pub(crate) fn derive_server_key(server_key_shares: &[ServerKeyShare]) {
     server_key.set_server_key();
 }
 
-pub(crate) fn evaluate_circuit(ua: UserAction) {
+pub(crate) fn evaluate_circuit(ua: UserAction<Word>) {
     match ua {
         UserAction::InitGame { initial_eggs } => todo!(),
         UserAction::SetStartingCoords { starting_coords } => todo!(),

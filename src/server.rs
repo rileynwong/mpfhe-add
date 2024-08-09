@@ -2,7 +2,7 @@ use crate::circuit::{derive_server_key, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
 
 use crate::types::{
-    CircuitOutput, DecryptionShare, DecryptionShareSubmission, Error, ErrorResponse,
+    CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Error, ErrorResponse,
     MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId, UserStorage,
 };
 use crate::UserAction;
@@ -73,20 +73,25 @@ async fn submit_sks(
 #[post("/request_action/<user_id>", data = "<action>", format = "msgpack")]
 async fn request_action(
     user_id: UserId,
-    action: MsgPack<UserAction>,
+    action: MsgPack<UserAction<EncryptedWord>>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let mut ss = ss.lock().await;
 
     ss.ensure(ServerState::ReadyForInputs)?;
     let user = ss.get_user(user_id)?;
-    match action.0 {
-        UserAction::InitGame { initial_eggs } => todo!(),
-        UserAction::SetStartingCoords { starting_coords } => todo!(),
-        UserAction::MovePlayer { .. } => todo!(),
-        UserAction::LayEgg { .. } => todo!(),
-        UserAction::PickupEgg { .. } => todo!(),
-        UserAction::GetCell { .. } => todo!(),
+    let action = action.unpack(user_id);
+    match action {
+        UserAction::InitGame { initial_eggs } => {
+            ss.eggs = Some(initial_eggs);
+        }
+        UserAction::SetStartingCoords { starting_coords } => {
+            ss.coords = Some(starting_coords);
+        }
+        UserAction::MovePlayer { .. }
+        | UserAction::LayEgg { .. }
+        | UserAction::PickupEgg { .. }
+        | UserAction::GetCell { .. } => {}
     };
 
     Ok(Json(user_id))
@@ -119,7 +124,7 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
 
                                 // Long running
                                 let mut ss = s2.blocking_lock();
-                                ss.fhe_outputs = None;
+                                // ss.fhe_outputs = None;
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
                             })
@@ -146,11 +151,7 @@ async fn get_fhe_output(
 ) -> Result<Json<CircuitOutput>, ErrorResponse> {
     let ss = ss.lock().await;
     ss.ensure(ServerState::CompletedFhe)?;
-    let output = ss
-        .fhe_outputs
-        .clone()
-        .expect("Should exist after CompletedFhe");
-    Ok(Json(output))
+    todo!();
 }
 
 /// The user submits the ciphertext
