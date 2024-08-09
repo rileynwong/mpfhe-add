@@ -192,7 +192,23 @@ async fn cmd_get_names(client: &WebClient) -> Result<(bool, Vec<String>), Error>
     Ok((d.is_concluded(), d.get_names()))
 }
 
-async fn cmd_conclude_registration(client: &WebClient) -> Result<Vec<String>, Error> {
+async fn cmd_init(client: &WebClient) -> Result<(), Error> {
+    todo!()
+}
+
+async fn cmd_setup_game(client: &WebClient) -> Result<(), Error> {
+    todo!()
+}
+
+async fn cmd_move(client: &WebClient) -> Result<(), Error> {
+    todo!()
+}
+
+async fn cmd_lay(client: &WebClient) -> Result<(), Error> {
+    todo!()
+}
+
+async fn cmd_pickup(client: &WebClient) -> Result<(), Error> {
     todo!()
 }
 
@@ -368,65 +384,86 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             })),
         }
     } else if cmd == &"init" {
-        todo!()
-        // match state {
-        //     State::ConcludedRegistration(s) => match cmd_conclude_registration(&s.client).await {
-        //         Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
-        //             name: s.name,
-        //             client: s.client,
-        //             ck: s.ck,
-        //             user_id: s.user_id,
-        //             names,
-        //         })),
-        //         Err(err) => Err((err, State::Setup(s))),
-        //     },
-        //     _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-        // }
+        match state {
+            State::SubmittedSks(s) => match cmd_init(&s.client).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
+    } else if cmd == &"setup_game" {
+        match state {
+            State::SubmittedSks(s) => match cmd_setup_game(&s.client).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
     } else if cmd == &"move" {
-        todo!()
-        // match state {
-        //     State::ConcludedRegistration(s) => match cmd_conclude_registration(&s.client).await {
-        //         Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
-        //             name: s.name,
-        //             client: s.client,
-        //             ck: s.ck,
-        //             user_id: s.user_id,
-        //             names,
-        //         })),
-        //         Err(err) => Err((err, State::Setup(s))),
-        //     },
-        //     _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-        // }
+        match state {
+            State::SubmittedSks(s) => match cmd_move(&s.client).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
     } else if cmd == &"lay" {
-        todo!()
-        // match state {
-        //     State::ConcludedRegistration(s) => match cmd_conclude_registration(&s.client).await {
-        //         Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
-        //             name: s.name,
-        //             client: s.client,
-        //             ck: s.ck,
-        //             user_id: s.user_id,
-        //             names,
-        //         })),
-        //         Err(err) => Err((err, State::Setup(s))),
-        //     },
-        //     _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-        // }
+        match state {
+            State::SubmittedSks(s) => match cmd_lay(&s.client).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
     } else if cmd == &"pickup" {
-        todo!()
-        // match state {
-        //     State::ConcludedRegistration(s) => match cmd_conclude_registration(&s.client).await {
-        //         Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
-        //             name: s.name,
-        //             client: s.client,
-        //             ck: s.ck,
-        //             user_id: s.user_id,
-        //             names,
-        //         })),
-        //         Err(err) => Err((err, State::Setup(s))),
-        //     },
-        //     _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-        // }
+        match state {
+            State::SubmittedSks(s) => match cmd_pickup(&s.client).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
+    } else if cmd == &"done" {
+        match state {
+            State::SubmittedSks(s) => Ok(State::SubmittedInput(SubmittedInput {
+                name: s.name,
+                client: s.client,
+                ck: s.ck,
+                user_id: s.user_id,
+                names: s.names,
+            })),
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
     } else if cmd == &"status" {
         match &state {
             State::Init(StateInit { client, .. })
