@@ -1,4 +1,9 @@
-use crate::{time, types::ServerKeyShare};
+use crate::{
+    compiled::{get_cell, lay_egg, move_player, pickup_egg},
+    time,
+    types::ServerKeyShare,
+    UserAction,
+};
 use phantom_zone::{aggregate_server_key_shares, ParameterSelector};
 
 pub const PARAMETER: ParameterSelector = ParameterSelector::NonInteractiveLTE40PartyExperimental;
@@ -11,4 +16,19 @@ pub(crate) fn derive_server_key(server_key_shares: &[ServerKeyShare]) {
         "Aggregate server key shares"
     );
     server_key.set_server_key();
+}
+
+pub(crate) fn evaluate_circuit(ua: UserAction) {
+    match ua {
+        UserAction::InitGame { initial_eggs } => todo!(),
+        UserAction::SetStartingCoords { starting_coords } => todo!(),
+        UserAction::MovePlayer { coords, direction } => move_player(&coords, &direction),
+        UserAction::LayEgg { coords, eggs } => lay_egg(&coords, &eggs),
+        UserAction::PickupEgg { coords, eggs } => pickup_egg(&coords, &eggs),
+        UserAction::GetCell {
+            coords,
+            eggs,
+            players,
+        } => get_cell(&coords, &eggs, &players),
+    };
 }

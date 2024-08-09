@@ -37,12 +37,29 @@ type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
 pub enum UserAction {
-    InitGame { initial_eggs: Word },
-    SetStartingCoords { starting_coords: Word },
-    MovePlayer,
-    LayEgg,
-    PickupEgg,
-    GetCell,
+    InitGame {
+        initial_eggs: Word,
+    },
+    SetStartingCoords {
+        starting_coords: Word,
+    },
+    MovePlayer {
+        coords: Word,
+        direction: Word,
+    },
+    LayEgg {
+        coords: Word,
+        eggs: Word,
+    },
+    PickupEgg {
+        coords: Word,
+        eggs: Word,
+    },
+    GetCell {
+        coords: Word,
+        eggs: Word,
+        players: Word,
+    },
 }
 
 impl UserAction {
