@@ -35,6 +35,7 @@ type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 
 /// Encrypted input words contributed from one user
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
 pub enum UserAction {
     InitGame { initial_eggs: Word },
     SetStartingCoords { starting_coords: Word },

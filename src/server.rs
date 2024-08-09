@@ -5,6 +5,7 @@ use crate::types::{
     CircuitOutput, DecryptionShare, DecryptionShareSubmission, Error, ErrorResponse,
     MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId, UserStorage,
 };
+use crate::UserAction;
 use phantom_zone::{set_common_reference_seed, set_parameter_set};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
@@ -65,6 +66,28 @@ async fn submit_sks(
     if ss.check_cipher_submission() {
         ss.transit(ServerState::ReadyForRunning);
     }
+
+    Ok(Json(user_id))
+}
+
+#[post("/request_action/<user_id>", data = "<action>", format = "msgpack")]
+async fn request_action(
+    user_id: UserId,
+    action: MsgPack<UserAction>,
+    ss: &State<MutexServerStorage>,
+) -> Result<Json<UserId>, ErrorResponse> {
+    let mut ss = ss.lock().await;
+
+    ss.ensure(ServerState::ReadyForInputs)?;
+    let user = ss.get_user(user_id)?;
+    match action.0 {
+        UserAction::InitGame { initial_eggs } => todo!(),
+        UserAction::SetStartingCoords { starting_coords } => todo!(),
+        UserAction::MovePlayer => todo!(),
+        UserAction::LayEgg => todo!(),
+        UserAction::PickupEgg => todo!(),
+        UserAction::GetCell => todo!(),
+    };
 
     Ok(Json(user_id))
 }
@@ -188,6 +211,7 @@ pub fn rocket() -> Rocket<Build> {
                 register,
                 get_dashboard,
                 submit_sks,
+                request_action,
                 run,
                 get_fhe_output,
                 submit_decryption_shares,
