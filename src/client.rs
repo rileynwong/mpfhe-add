@@ -1,8 +1,8 @@
 use crate::{
     dashboard::{Dashboard, RegisteredUser},
     types::{
-        EncryptedInput, CircuitOutput, DecryptionShare, DecryptionShareSubmission, InputSubmission,
-        Seed, ServerKeyShare, ServerState, UserId,
+        CircuitOutput, DecryptionShare, DecryptionShareSubmission, Seed, ServerKeyShare,
+        ServerState, SksSubmission, UserAction, UserId, Word,
     },
 };
 use anyhow::{anyhow, bail, Error};
@@ -126,27 +126,75 @@ impl WebClient {
     pub async fn register(&self, name: &str) -> Result<RegisteredUser, Error> {
         self.post("/register", name.as_bytes().to_vec()).await
     }
+
     pub async fn get_dashboard(&self) -> Result<Dashboard, Error> {
         self.get("/dashboard").await
     }
 
-    pub async fn conclude_registration(&self) -> Result<Dashboard, Error> {
-        self.post_nobody("/conclude_registration").await
-    }
-
-    pub async fn submit_cipher(
-        &self,
-        user_id: UserId,
-        ei: &EncryptedInput,
-        sks: &ServerKeyShare,
-    ) -> Result<UserId, Error> {
-        let submission = InputSubmission {
+    pub async fn submit_sks(&self, user_id: UserId, sks: &ServerKeyShare) -> Result<UserId, Error> {
+        let submission = SksSubmission {
             user_id,
-            ei: ei.clone(),
             sks: sks.clone(),
         };
-        self.post_msgpack("/submit", &submission).await
+        self.post_msgpack("/submit_sks", &submission).await
     }
+
+    async fn request_action(&self, user_id: UserId, action: &UserAction) -> Result<UserId, Error> {
+        self.post_msgpack(&format!("/request_action/{user_id}"), action)
+            .await
+    }
+
+    /// This function can only be called by user 0
+    pub async fn init_game(&self, user_id: UserId, initial_eggs: &Word) -> Result<UserId, Error> {
+        let action = UserAction::InitGame {
+            initial_eggs: initial_eggs.to_vec(),
+        };
+        self.request_action(user_id, &action).await
+    }
+
+    pub async fn set_starting_coords(
+        &self,
+        user_id: UserId,
+        starting_coords: &Word,
+    ) -> Result<UserId, Error> {
+        let action = UserAction::SetStartingCoords {
+            starting_coords: starting_coords.to_vec(),
+        };
+        self.request_action(user_id, &action).await
+    }
+
+    // Each round, client can submiit one of the 3 actions
+    // Action include (move_player, lay_egg, pickup_egg)
+
+    pub async fn move_player(&self, user_id: UserId, direction: &Word) -> Result<UserId, Error> {
+        let action = UserAction::MovePlayer {};
+        self.request_action(user_id, &action).await
+    }
+
+    pub async fn lay_egg(&self, user_id: UserId) -> Result<UserId, Error> {
+        let action = UserAction::LayEgg {};
+        self.request_action(user_id, &action).await
+    }
+
+    pub async fn pickup_egg(&self, user_id: UserId) -> Result<UserId, Error> {
+        let action = UserAction::PickupEgg {};
+        self.request_action(user_id, &action).await
+    }
+
+    /// After the actions submitted from all users,
+    /// they can call get_cell
+    pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {
+        let action = UserAction::GetCell {};
+        self.request_action(user_id, &action).await
+    }
+
+    // After get_cell, need to decrypt the result
+    // user i should be the last person to decrypt the result for his get_cell
+
+    // Server state
+    // Round start (each user can submiit one action)
+    // GetCell (each user can call get cell)
+    // DecryptResult (decrypt each user's result)
 
     pub async fn trigger_fhe_run(&self) -> Result<ServerState, Error> {
         self.post_nobody("/run").await

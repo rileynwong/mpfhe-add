@@ -10,6 +10,7 @@ use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio::sync::Mutex;
 use rocket::Responder;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::fmt::Display;
 use std::sync::Arc;
 use thiserror::Error;
@@ -34,17 +35,23 @@ type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 
 /// Encrypted input words contributed from one user
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EncryptedInput {
-    karma_sent: Vec<EncryptedWord>,
+#[serde(crate = "rocket::serde")]
+pub enum UserAction {
+    InitGame { initial_eggs: Word },
+    SetStartingCoords { starting_coords: Word },
+    MovePlayer,
+    LayEgg,
+    PickupEgg,
+    GetCell,
 }
 
-impl EncryptedInput {
+impl UserAction {
     pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
+        todo!();
         let cipher = karma
             .iter()
             .map(|score| encrypt_plain(ck, *score))
             .collect_vec();
-        Self { karma_sent: cipher }
     }
 
     /// Unpack ciphers
@@ -53,14 +60,15 @@ impl EncryptedInput {
     /// 2. Key Switch: We reencrypt the cipher with the server key for the computation. We need to specify the original signer of the cipher.
     /// 3. Extract: A user's encrypted inputs are packed in a batched struct. We call `extract_all` method to convert it to unbatched word.
     pub(crate) fn unpack(&self, user_id: UserId) -> CircuitInput {
-        self.karma_sent
-            .iter()
-            .map(|word| {
-                word.unseed::<Vec<Vec<u64>>>()
-                    .key_switch(user_id)
-                    .extract_all()
-            })
-            .collect_vec()
+        todo!();
+        // self.karma_sent
+        //     .iter()
+        //     .map(|word| {
+        //         word.unseed::<Vec<Vec<u64>>>()
+        //             .key_switch(user_id)
+        //             .extract_all()
+        //     })
+        //     .collect_vec()
     }
 }
 
@@ -245,24 +253,20 @@ impl ServerStorage {
     pub(crate) fn check_cipher_submission(&self) -> bool {
         self.users
             .iter()
-            .all(|user| matches!(user.storage, UserStorage::CipherSks(..)))
+            .all(|user| matches!(user.storage, UserStorage::Sks(..)))
     }
 
-    pub(crate) fn get_ciphers_and_sks(
-        &mut self,
-    ) -> Result<(Vec<ServerKeyShare>, Vec<EncryptedInput>), Error> {
+    pub(crate) fn get_sks(&mut self) -> Result<Vec<ServerKeyShare>, Error> {
         let mut server_key_shares = vec![];
-        let mut ciphers = vec![];
         for (user_id, user) in self.users.iter_mut().enumerate() {
-            if let Some((cipher, sks)) = user.storage.get_cipher_sks() {
+            if let Some(sks) = user.storage.get_cipher_sks() {
                 server_key_shares.push(sks.clone());
-                ciphers.push(cipher.clone());
                 user.storage = UserStorage::DecryptionShare(None);
             } else {
                 return Err(Error::CipherNotFound { user_id });
             }
         }
-        Ok((server_key_shares, ciphers))
+        Ok(server_key_shares)
     }
 
     pub(crate) fn get_dashboard(&self) -> Dashboard {
@@ -280,14 +284,14 @@ pub(crate) struct UserRecord {
 #[derive(Debug, Clone)]
 pub(crate) enum UserStorage {
     Empty,
-    CipherSks(EncryptedInput, Box<ServerKeyShare>),
+    Sks(Box<ServerKeyShare>),
     DecryptionShare(Option<Vec<DecryptionShare>>),
 }
 
 impl UserStorage {
-    pub(crate) fn get_cipher_sks(&self) -> Option<(&EncryptedInput, &ServerKeyShare)> {
+    pub(crate) fn get_cipher_sks(&self) -> Option<&ServerKeyShare> {
         match self {
-            Self::CipherSks(cipher, sks) => Some((cipher, sks)),
+            Self::Sks(sks) => Some(sks),
             _ => None,
         }
     }
@@ -307,9 +311,8 @@ pub type DecryptionSharesMap = HashMap<(usize, UserId), DecryptionShare>;
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
-pub(crate) struct InputSubmission {
+pub(crate) struct SksSubmission {
     pub(crate) user_id: UserId,
-    pub(crate) ei: EncryptedInput,
     pub(crate) sks: ServerKeyShare,
 }
 

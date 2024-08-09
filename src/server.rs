@@ -1,11 +1,11 @@
-use crate::circuit::{derive_server_key, evaluate_circuit, PARAMETER};
+use crate::circuit::{derive_server_key, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
-use crate::time;
+
 use crate::types::{
     CircuitOutput, DecryptionShare, DecryptionShareSubmission, Error, ErrorResponse,
-    InputSubmission, MutexServerStorage, Seed, ServerState, ServerStorage, UserId, UserStorage,
+    MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId, UserStorage,
 };
-use itertools::Itertools;
+use crate::UserAction;
 use phantom_zone::{set_common_reference_seed, set_parameter_set};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
@@ -21,6 +21,7 @@ async fn get_param(ss: &State<MutexServerStorage>) -> Json<Seed> {
 }
 
 /// A user registers a name and get an ID
+/// We support 4 players
 #[post("/register", data = "<name>")]
 async fn register(
     name: &str,
@@ -31,19 +32,13 @@ async fn register(
     let user = ss.add_user(name);
     println!("{name} just joined!");
 
-    Ok(Json(user))
-}
+    if ss.users.len() == 4 {
+        ss.ensure(ServerState::ReadyForJoining)?;
+        ss.transit(ServerState::ReadyForInputs);
+        println!("Got 4 players. Registration closed!");
+    }
 
-#[post("/conclude_registration")]
-async fn conclude_registration(
-    ss: &State<MutexServerStorage>,
-) -> Result<Json<Dashboard>, ErrorResponse> {
-    let mut ss = ss.lock().await;
-    ss.ensure(ServerState::ReadyForJoining)?;
-    ss.transit(ServerState::ReadyForInputs);
-    println!("Registration closed!");
-    let dashboard = ss.get_dashboard();
-    Ok(Json(dashboard))
+    Ok(Json(user))
 }
 
 #[get("/dashboard")]
@@ -52,25 +47,47 @@ async fn get_dashboard(ss: &State<MutexServerStorage>) -> Json<Dashboard> {
     Json(dashboard)
 }
 
-/// The user submits the ciphertext
-#[post("/submit", data = "<submission>", format = "msgpack")]
-async fn submit(
-    submission: MsgPack<InputSubmission>,
+/// The user submits Server key shares
+#[post("/submit_sks", data = "<submission>", format = "msgpack")]
+async fn submit_sks(
+    submission: MsgPack<SksSubmission>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let mut ss = ss.lock().await;
 
     ss.ensure(ServerState::ReadyForInputs)?;
 
-    let InputSubmission { user_id, ei, sks } = submission.0;
+    let SksSubmission { user_id, sks } = submission.0;
 
     let user = ss.get_user(user_id)?;
     println!("{} submited data", user.name);
-    user.storage = UserStorage::CipherSks(ei, Box::new(sks));
+    user.storage = UserStorage::Sks(Box::new(sks));
 
     if ss.check_cipher_submission() {
         ss.transit(ServerState::ReadyForRunning);
     }
+
+    Ok(Json(user_id))
+}
+
+#[post("/request_action/<user_id>", data = "<action>", format = "msgpack")]
+async fn request_action(
+    user_id: UserId,
+    action: MsgPack<UserAction>,
+    ss: &State<MutexServerStorage>,
+) -> Result<Json<UserId>, ErrorResponse> {
+    let mut ss = ss.lock().await;
+
+    ss.ensure(ServerState::ReadyForInputs)?;
+    let user = ss.get_user(user_id)?;
+    match action.0 {
+        UserAction::InitGame { initial_eggs } => todo!(),
+        UserAction::SetStartingCoords { starting_coords } => todo!(),
+        UserAction::MovePlayer => todo!(),
+        UserAction::LayEgg => todo!(),
+        UserAction::PickupEgg => todo!(),
+        UserAction::GetCell => todo!(),
+    };
 
     Ok(Json(user_id))
 }
@@ -83,7 +100,7 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
 
     match &ss.state {
         ServerState::ReadyForRunning => {
-            let (server_key_shares, encrypted_inputs) = ss.get_ciphers_and_sks()?;
+            let server_key_shares = ss.get_sks()?;
 
             tokio::task::spawn_blocking(move || {
                 rayon::ThreadPoolBuilder::new()
@@ -100,17 +117,9 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                 // Long running, global variable change
                                 derive_server_key(&server_key_shares);
 
-                                // Unpack to get circuit inputs
-                                let cis = encrypted_inputs
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(user_id, ei)| ei.unpack(user_id))
-                                    .collect_vec();
-
                                 // Long running
-                                let output = time!(|| evaluate_circuit(&cis), "Evaluating Circuit");
                                 let mut ss = s2.blocking_lock();
-                                ss.fhe_outputs = Some(output);
+                                ss.fhe_outputs = None;
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
                             })
@@ -200,9 +209,9 @@ pub fn rocket() -> Rocket<Build> {
             routes![
                 get_param,
                 register,
-                conclude_registration,
                 get_dashboard,
-                submit,
+                submit_sks,
+                request_action,
                 run,
                 get_fhe_output,
                 submit_decryption_shares,
