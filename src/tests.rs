@@ -225,7 +225,10 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
 
     for (i, user) in users.iter_mut().enumerate() {
         let ck = user.ck.as_ref().unwrap();
-        client.set_starting_coords(ck, i, &[user.starting_coords.unwrap()]);
+        client
+            .set_starting_coords(ck, i, &[user.starting_coords.unwrap()])
+            .await
+            .unwrap();
     }
 
     println!("round 1 start");
@@ -235,11 +238,11 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
     for (i, user) in users.iter_mut().enumerate() {
         let ck = user.ck.as_ref().unwrap();
         if i == 0 || i == 1 {
-            client.move_player(ck, i, directions[i]);
+            client.move_player(ck, i, directions[i]).await.unwrap();
         } else if i == 2 {
-            client.lay_egg(i);
+            client.lay_egg(i).await.unwrap();
         } else {
-            client.pickup_egg(i);
+            client.pickup_egg(i).await.unwrap();
         }
     }
 
