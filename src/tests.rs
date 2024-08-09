@@ -4,6 +4,7 @@ use crate::*;
 use anyhow::Error;
 use futures::future::join_all;
 use itertools::Itertools;
+use phantom_zone::MultiPartyDecryptor;
 use phantom_zone::{gen_client_key, gen_server_key_share, set_parameter_set};
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use rocket::{
@@ -49,6 +50,7 @@ impl User {
             decryption_shares: HashMap::new(),
         }
     }
+
     fn assign_seed(&mut self, seed: Seed) -> &mut Self {
         self.seed = Some(seed);
         self
@@ -88,6 +90,7 @@ impl User {
         self.fhe_out = Some(fhe_out);
         self
     }
+
     /// Populate decryption_shares with my shares
     fn gen_decryption_shares(&mut self) -> &mut Self {
         let ck = self.ck.as_ref().expect("already exists");
@@ -106,18 +109,22 @@ impl User {
         let total_users = self.total_users.expect("exist");
         let my_id = self.id.expect("exists");
         (0..total_users)
-            .map(|output_id| {
+            .filter_map(|output_id| {
+                if output_id == my_id {
+                    return None;
+                };
+
                 let share = self
                     .decryption_shares
                     .get(&(output_id, my_id))
                     .expect("exists")
                     .to_owned();
-                (output_id, share)
+                Some((output_id, share))
             })
             .collect_vec()
     }
 
-    fn decrypt_everything(&self) -> Vec<Score> {
+    fn decrypt_everything(&self) -> Vec<Vec<bool>> {
         let total_users = self.total_users.expect("exist");
         let ck = self.ck.as_ref().expect("already exists");
         let co = self.fhe_out.as_ref().expect("exists");
@@ -206,43 +213,45 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
     // User 0 encrypt initial eggs
     let initial_eggs = [false; BOARD_SIZE];
     let ck = users[0].ck.as_ref().unwrap();
-    client.init_game(ck, 0, &initial_eggs).await.unwrap();
+    client.init_game(ck, 0, &initial_eggs);
 
     println!("users call set starting coords");
 
     // Assign starting coords
-    let users_coords = vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)];
-    for (i, user) in users.iter_mut().enumerate() {
-        user.assign_starting_coords(&users_coords[i]);
+    let users_coords = vec![(0u8, 0u8), (0u8, 0u8), (0u8, 0u8), (0u8, 0u8)];
+    for user in users.iter_mut() {
+        user.assign_starting_coords(&users_coords[user.id.unwrap()]);
     }
 
     for (i, user) in users.iter_mut().enumerate() {
         let ck = user.ck.as_ref().unwrap();
-        client
-            .set_starting_coords(ck, i, &[user.starting_coords.unwrap()])
-            .await
-            .unwrap();
+        client.set_starting_coords(ck, i, &[user.starting_coords.unwrap()]);
     }
 
-    println!("round start");
+    println!("round 1 start");
     println!("each user submit an action");
 
-    let directions = vec![
-        Direction::Up,
-        Direction::Down,
-        Direction::Left,
-        Direction::Right,
-    ];
+    let directions = vec![Direction::Up, Direction::Down];
     for (i, user) in users.iter_mut().enumerate() {
         let ck = user.ck.as_ref().unwrap();
-        client.move_player(ck, i, directions[i]).await.unwrap();
+        if i == 0 || i == 1 {
+            client.move_player(ck, i, directions[i]);
+        } else if i == 2 {
+            client.lay_egg(i);
+        } else {
+            client.pickup_egg(i);
+        }
     }
+
+    println!("any user calls trigger the run");
 
     // Admin runs the FHE computation
     client.trigger_fhe_run().await.unwrap();
     while client.trigger_fhe_run().await.unwrap() != ServerState::CompletedFhe {
         sleep(Duration::from_secs(1)).await
     }
+
+    println!("users get fhe output and decrypt shares");
 
     // Users get FHE output, generate decryption shares, and submit decryption shares
     for user in users.iter_mut() {
@@ -252,27 +261,25 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
         user.gen_decryption_shares();
 
         client
-            .submit_decryption_shares(user.id.expect("exist now"), &user.get_my_shares())
+            .submit_decryption_shares(user.id.expect("exist now"), &&user.get_my_shares())
             .await
             .unwrap();
     }
-    // Users acquire all decryption shares they want
-    for user in users.iter_mut() {
-        for (output_id, user_id) in (0..total_users).cartesian_product(0..total_users) {
-            if user.decryption_shares.get(&(output_id, user_id)).is_none() {
-                let ds = client
-                    .get_decryption_share(output_id, user_id)
-                    .await
-                    .unwrap();
-                user.decryption_shares.insert((output_id, user_id), ds);
-            }
-        }
-    }
-    // Users decrypt everything
-    println!("Users decrypt everything");
+
+    // TODO: should not hard code this
+    let correct_ouput = [
+        [true, false, false, false, false],
+        [false, true, false, false, false],
+        [false, false, true, true, false],
+        [false, false, true, true, false],
+    ];
+
+    // Each user decrypt thier own cell
+    println!("Users decrypt their own cell");
     for user in users {
         let decrypted_outs = user.decrypt_everything();
         println!("{} sees {:?}", user.name, decrypted_outs);
+        assert_eq!(decrypted_outs, correct_ouput);
     }
     Ok(())
 }

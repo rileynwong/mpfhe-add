@@ -231,7 +231,7 @@ impl CircuitOutput {
             .collect_vec()
     }
 
-    pub fn decrypt(&self, ck: &ClientKey, dss: &[Vec<DecryptionShare>]) -> Vec<PlainWord> {
+    pub fn decrypt(&self, ck: &ClientKey, dss: &[Vec<DecryptionShare>]) -> Vec<Vec<bool>> {
         self.cells
             .iter()
             .zip_eq(dss)
@@ -253,7 +253,7 @@ pub fn gen_decryption_shares(ck: &ClientKey, fhe_output: &Word) -> DecryptionSha
     dec_shares
 }
 
-fn decrypt_word(ck: &ClientKey, fhe_output: &Word, shares: &[DecryptionShare]) -> PlainWord {
+fn decrypt_word(ck: &ClientKey, fhe_output: &Word, shares: &[DecryptionShare]) -> Vec<bool> {
     // A DecryptionShare is user i's contribution to word j.
     // To decrypt word j at bit position k. We need to extract the position k of user i's share.
     let decrypted_bits = fhe_output
@@ -267,7 +267,7 @@ fn decrypt_word(ck: &ClientKey, fhe_output: &Word, shares: &[DecryptionShare]) -
             ck.aggregate_decryption_shares(fhe_bit, &shares_for_bit_k)
         })
         .collect_vec();
-    recover(&decrypted_bits) as i16
+    decrypted_bits
 }
 
 #[derive(Debug, Error)]
