@@ -281,6 +281,8 @@ pub(crate) enum Error {
     OutputNotReady,
     #[error("Init action not performed yet")]
     GameNotInitedYet,
+    #[error("Cells not found")]
+    CellNotFound,
 }
 
 #[derive(Responder)]
@@ -296,7 +298,8 @@ impl From<Error> for ErrorResponse {
         match error {
             Error::WrongServerState { .. }
             | Error::CipherNotFound { .. }
-            | Error::GameNotInitedYet => ErrorResponse::ServerError(error.to_string()),
+            | Error::GameNotInitedYet
+            | Error::CellNotFound => ErrorResponse::ServerError(error.to_string()),
             Error::DecryptionShareNotFound { .. }
             | Error::UnregisteredUser { .. }
             | Error::OutputNotReady => ErrorResponse::NotFoundError(error.to_string()),

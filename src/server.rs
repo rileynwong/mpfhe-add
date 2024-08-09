@@ -6,7 +6,7 @@ use crate::types::{
     GameStateEnc, MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId,
     UserStorage,
 };
-use crate::UserAction;
+use crate::{UserAction, Word};
 use phantom_zone::{set_common_reference_seed, set_parameter_set};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
@@ -169,12 +169,11 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
 }
 
 #[get("/fhe_output")]
-async fn get_fhe_output(
-    ss: &State<MutexServerStorage>,
-) -> Result<Json<CircuitOutput>, ErrorResponse> {
+async fn get_fhe_output(ss: &State<MutexServerStorage>) -> Result<Json<Vec<Word>>, ErrorResponse> {
     let ss = ss.lock().await;
     ss.ensure(ServerState::CompletedFhe)?;
-    todo!();
+    let cells = ss.cells.clone().ok_or(Error::CellNotFound)?;
+    Ok(Json(cells))
 }
 
 /// The user submits the ciphertext
