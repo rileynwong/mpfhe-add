@@ -2,9 +2,15 @@
 #![allow(clippy::all)]
 
 #[rustfmt::skip]
-mod karma_add_rs_fhe_lib;
+mod get_cell;
 #[rustfmt::skip]
-mod karma_sub_rs_fhe_lib;
+mod lay_egg;
+#[rustfmt::skip]
+mod move_player;
+#[rustfmt::skip]
+mod pickup_egg;
 
-pub(super) use karma_add_rs_fhe_lib::karma_add;
-pub(super) use karma_sub_rs_fhe_lib::karma_sub;
+pub(super) use get_cell::get_cell;
+pub(super) use lay_egg::lay_egg;
+pub(super) use move_player::move_player;
+pub(super) use pickup_egg::pickup_egg;

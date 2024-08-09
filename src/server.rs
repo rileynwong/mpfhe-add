@@ -83,10 +83,10 @@ async fn request_action(
     match action.0 {
         UserAction::InitGame { initial_eggs } => todo!(),
         UserAction::SetStartingCoords { starting_coords } => todo!(),
-        UserAction::MovePlayer => todo!(),
-        UserAction::LayEgg => todo!(),
-        UserAction::PickupEgg => todo!(),
-        UserAction::GetCell => todo!(),
+        UserAction::MovePlayer { .. } => todo!(),
+        UserAction::LayEgg { .. } => todo!(),
+        UserAction::PickupEgg { .. } => todo!(),
+        UserAction::GetCell { .. } => todo!(),
     };
 
     Ok(Json(user_id))

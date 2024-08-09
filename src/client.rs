@@ -166,25 +166,50 @@ impl WebClient {
     // Each round, client can submiit one of the 3 actions
     // Action include (move_player, lay_egg, pickup_egg)
 
-    pub async fn move_player(&self, user_id: UserId, direction: &Word) -> Result<UserId, Error> {
-        let action = UserAction::MovePlayer {};
+    pub async fn move_player(
+        &self,
+        user_id: UserId,
+        coords: Word,
+        direction: Word,
+    ) -> Result<UserId, Error> {
+        let action = UserAction::MovePlayer { coords, direction };
         self.request_action(user_id, &action).await
     }
 
-    pub async fn lay_egg(&self, user_id: UserId) -> Result<UserId, Error> {
-        let action = UserAction::LayEgg {};
+    pub async fn lay_egg(
+        &self,
+        user_id: UserId,
+        coords: Word,
+        eggs: Word,
+    ) -> Result<UserId, Error> {
+        let action = UserAction::LayEgg { coords, eggs };
         self.request_action(user_id, &action).await
     }
 
-    pub async fn pickup_egg(&self, user_id: UserId) -> Result<UserId, Error> {
-        let action = UserAction::PickupEgg {};
+    pub async fn pickup_egg(
+        &self,
+        user_id: UserId,
+        coords: Word,
+        eggs: Word,
+    ) -> Result<UserId, Error> {
+        let action = UserAction::PickupEgg { coords, eggs };
         self.request_action(user_id, &action).await
     }
 
     /// After the actions submitted from all users,
     /// they can call get_cell
-    pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {
-        let action = UserAction::GetCell {};
+    pub async fn get_cell(
+        &self,
+        user_id: usize,
+        coords: Word,
+        eggs: Word,
+        players: Word,
+    ) -> Result<UserId, Error> {
+        let action = UserAction::GetCell {
+            coords,
+            eggs,
+            players,
+        };
         self.request_action(user_id, &action).await
     }
 
