@@ -35,7 +35,7 @@ pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 
 #[derive(Copy, Clone)]
 #[repr(u8)]
-enum Direction {
+pub enum Direction {
     Up = 0,
     Down,
     Left,
@@ -177,7 +177,7 @@ impl UserAction<EncryptedWord> {
     }
 
     pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
-        match self {
+        match &self {
             UserAction::InitGame { initial_eggs } => UserAction::InitGame {
                 initial_eggs: unpack_word(initial_eggs, user_id),
             },
@@ -187,27 +187,12 @@ impl UserAction<EncryptedWord> {
                     .map(|word| unpack_word(word, user_id))
                     .collect_vec(),
             },
-            UserAction::MovePlayer { coords, direction } => UserAction::MovePlayer {
-                coords: unpack_word(coords, user_id),
+            UserAction::MovePlayer { direction } => UserAction::MovePlayer {
                 direction: unpack_word(direction, user_id),
             },
-            UserAction::LayEgg { coords, eggs } => UserAction::LayEgg {
-                coords: unpack_word(coords, user_id),
-                eggs: unpack_word(eggs, user_id),
-            },
-            UserAction::PickupEgg { coords, eggs } => UserAction::PickupEgg {
-                coords: unpack_word(coords, user_id),
-                eggs: unpack_word(eggs, user_id),
-            },
-            UserAction::GetCell {
-                coords,
-                eggs,
-                players,
-            } => UserAction::GetCell {
-                coords: unpack_word(coords, user_id),
-                eggs: unpack_word(eggs, user_id),
-                players: unpack_word(players, user_id),
-            },
+            UserAction::LayEgg => UserAction::LayEgg,
+            UserAction::PickupEgg => UserAction::PickupEgg,
+            UserAction::GetCell => UserAction::GetCell,
         }
     }
 }
