@@ -29,8 +29,38 @@ pub(crate) type CircuitInput = Vec<Word>;
 /// Decryption share for a word from one user.
 pub(crate) type DecryptionShare = Vec<u64>;
 
+pub type Coord = u8;
+
 type PlainWord = i16;
-type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
+pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
+
+fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
+    let mut result = [false; N];
+    for i in 0..N / 2 {
+        if (x >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    for i in N / 2..N {
+        if (y >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    result
+}
+
+pub struct GameState {
+    /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
+    coords: Vec<(u8, u8)>,
+    /// example: [false; BOARD_SIZE];
+    eggs: Vec<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GameStateEnc {
+    pub coords: Vec<Word>,
+    pub eggs: Word,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
@@ -75,33 +105,30 @@ impl PlainCoord {
 /// Encrypted input words contributed from one user
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
-pub enum UserAction {
-    InitGame {
-        initial_eggs: Word,
-    },
-    SetStartingCoords {
-        starting_coords: Word,
-    },
-    MovePlayer {
-        coords: Word,
-        direction: Word,
-    },
-    LayEgg {
-        coords: Word,
-        eggs: Word,
-    },
-    PickupEgg {
-        coords: Word,
-        eggs: Word,
-    },
-    GetCell {
-        coords: Word,
-        eggs: Word,
-        players: Word,
-    },
+pub enum UserAction<T> {
+    InitGame { initial_eggs: T },
+    SetStartingCoords { starting_coords: T },
+    MovePlayer { coords: T, direction: T },
+    LayEgg { coords: T, eggs: T },
+    PickupEgg { coords: T, eggs: T },
+    GetCell { coords: T, eggs: T, players: T },
 }
 
-impl UserAction {
+impl<T> Display for UserAction<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            UserAction::InitGame { .. } => "InitGame",
+            UserAction::SetStartingCoords { .. } => "SetStartingCoords",
+            UserAction::MovePlayer { .. } => "MovePlayer",
+            UserAction::LayEgg { .. } => "LayEgg",
+            UserAction::PickupEgg { .. } => "PickupEgg",
+            UserAction::GetCell { .. } => "GetCell",
+        };
+        write!(f, "{}", text)
+    }
+}
+
+impl UserAction<EncryptedWord> {
     pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
         todo!();
         let cipher = karma
@@ -109,28 +136,50 @@ impl UserAction {
             .map(|score| encrypt_plain(ck, *score))
             .collect_vec();
     }
-
-    /// Unpack ciphers
-    ///
-    /// 1. Decompression: A cipher is a matrix generated from a seed. The seed is sent through the network as a compression. By calling the `unseed` method we recovered the matrix here.
-    /// 2. Key Switch: We reencrypt the cipher with the server key for the computation. We need to specify the original signer of the cipher.
-    /// 3. Extract: A user's encrypted inputs are packed in a batched struct. We call `extract_all` method to convert it to unbatched word.
-    pub(crate) fn unpack(&self, user_id: UserId) -> CircuitInput {
-        todo!();
-        // self.karma_sent
-        //     .iter()
-        //     .map(|word| {
-        //         word.unseed::<Vec<Vec<u64>>>()
-        //             .key_switch(user_id)
-        //             .extract_all()
-        //     })
-        //     .collect_vec()
+    pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
+        match self {
+            UserAction::InitGame { initial_eggs } => UserAction::InitGame {
+                initial_eggs: unpack_word(initial_eggs, user_id),
+            },
+            UserAction::SetStartingCoords { starting_coords } => UserAction::SetStartingCoords {
+                starting_coords: unpack_word(starting_coords, user_id),
+            },
+            UserAction::MovePlayer { coords, direction } => UserAction::MovePlayer {
+                coords: unpack_word(coords, user_id),
+                direction: unpack_word(direction, user_id),
+            },
+            UserAction::LayEgg { coords, eggs } => UserAction::LayEgg {
+                coords: unpack_word(coords, user_id),
+                eggs: unpack_word(eggs, user_id),
+            },
+            UserAction::PickupEgg { coords, eggs } => UserAction::PickupEgg {
+                coords: unpack_word(coords, user_id),
+                eggs: unpack_word(eggs, user_id),
+            },
+            UserAction::GetCell {
+                coords,
+                eggs,
+                players,
+            } => UserAction::GetCell {
+                coords: unpack_word(coords, user_id),
+                eggs: unpack_word(eggs, user_id),
+                players: unpack_word(players, user_id),
+            },
+        }
     }
 }
+
+impl UserAction<Word> {}
 
 fn encrypt_plain(ck: &ClientKey, plain: PlainWord) -> EncryptedWord {
     let plain = u64_to_binary::<32>(plain as u64);
     ck.encrypt(plain.as_slice())
+}
+
+fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
+    word.unseed::<Vec<Vec<u64>>>()
+        .key_switch(user_id)
+        .extract_all()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +253,8 @@ pub(crate) enum Error {
     /// Temporary here
     #[error("Output not ready")]
     OutputNotReady,
+    #[error("Init action not performed yet")]
+    GameNotInitedYet,
 }
 
 #[derive(Responder)]
@@ -217,9 +268,9 @@ pub(crate) enum ErrorResponse {
 impl From<Error> for ErrorResponse {
     fn from(error: Error) -> Self {
         match error {
-            Error::WrongServerState { .. } | Error::CipherNotFound { .. } => {
-                ErrorResponse::ServerError(error.to_string())
-            }
+            Error::WrongServerState { .. }
+            | Error::CipherNotFound { .. }
+            | Error::GameNotInitedYet => ErrorResponse::ServerError(error.to_string()),
             Error::DecryptionShareNotFound { .. }
             | Error::UnregisteredUser { .. }
             | Error::OutputNotReady => ErrorResponse::NotFoundError(error.to_string()),
@@ -268,7 +319,10 @@ pub(crate) struct ServerStorage {
     pub(crate) seed: Seed,
     pub(crate) state: ServerState,
     pub(crate) users: Vec<UserRecord>,
-    pub(crate) fhe_outputs: Option<CircuitOutput>,
+
+    pub(crate) game_state: Option<GameStateEnc>,
+    pub(crate) action_queue: Vec<(UserId, UserAction<Word>)>,
+    pub(crate) cells: Option<Vec<Word>>,
 }
 
 impl ServerStorage {
@@ -277,7 +331,10 @@ impl ServerStorage {
             seed,
             state: ServerState::ReadyForJoining,
             users: vec![],
-            fhe_outputs: None,
+
+            game_state: None,
+            action_queue: vec![],
+            cells: None,
         }
     }
 

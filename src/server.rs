@@ -1,8 +1,8 @@
-use crate::circuit::{derive_server_key, PARAMETER};
+use crate::circuit::{derive_server_key, evaluate_circuit, get_cells, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
 
 use crate::types::{
-    CircuitOutput, DecryptionShare, DecryptionShareSubmission, Error, ErrorResponse,
+    CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Error, ErrorResponse,
     MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId, UserStorage,
 };
 use crate::UserAction;
@@ -73,20 +73,26 @@ async fn submit_sks(
 #[post("/request_action/<user_id>", data = "<action>", format = "msgpack")]
 async fn request_action(
     user_id: UserId,
-    action: MsgPack<UserAction>,
+    action: MsgPack<UserAction<EncryptedWord>>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let mut ss = ss.lock().await;
 
     ss.ensure(ServerState::ReadyForInputs)?;
     let user = ss.get_user(user_id)?;
-    match action.0 {
-        UserAction::InitGame { initial_eggs } => todo!(),
-        UserAction::SetStartingCoords { starting_coords } => todo!(),
-        UserAction::MovePlayer { .. } => todo!(),
-        UserAction::LayEgg { .. } => todo!(),
-        UserAction::PickupEgg { .. } => todo!(),
-        UserAction::GetCell { .. } => todo!(),
+    println!("{} performed {}", user.name, action.to_string());
+    let action = action.unpack(user_id);
+    match action {
+        UserAction::InitGame { initial_eggs } => {
+            ss.eggs = Some(initial_eggs);
+        }
+        UserAction::SetStartingCoords { starting_coords } => {
+            ss.coords = Some(starting_coords);
+        }
+        UserAction::MovePlayer { .. }
+        | UserAction::LayEgg { .. }
+        | UserAction::PickupEgg { .. }
+        | UserAction::GetCell { .. } => ss.action_queue.push(action),
     };
 
     Ok(Json(user_id))
@@ -101,6 +107,8 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
     match &ss.state {
         ServerState::ReadyForRunning => {
             let server_key_shares = ss.get_sks()?;
+            let game_state = ss.game_state.clone().ok_or(Error::GameNotInitedYet)?;
+            let uas = ss.action_queue.clone();
 
             tokio::task::spawn_blocking(move || {
                 rayon::ThreadPoolBuilder::new()
@@ -118,8 +126,11 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                 derive_server_key(&server_key_shares);
 
                                 // Long running
+                                let final_game_state = evaluate_circuit(game_state, &uas);
+                                let cells = get_cells(&final_game_state, 4);
                                 let mut ss = s2.blocking_lock();
-                                ss.fhe_outputs = None;
+                                ss.game_state = Some(final_game_state);
+                                ss.cells = Some(cells);
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
                             })
@@ -146,11 +157,7 @@ async fn get_fhe_output(
 ) -> Result<Json<CircuitOutput>, ErrorResponse> {
     let ss = ss.lock().await;
     ss.ensure(ServerState::CompletedFhe)?;
-    let output = ss
-        .fhe_outputs
-        .clone()
-        .expect("Should exist after CompletedFhe");
-    Ok(Json(output))
+    todo!();
 }
 
 /// The user submits the ciphertext

@@ -1,12 +1,13 @@
 use crate::{
     compiled::{get_cell, lay_egg, move_player, pickup_egg},
     time,
-    types::ServerKeyShare,
-    UserAction,
+    types::{GameStateEnc, ServerKeyShare, Word},
+    UserAction, UserId,
 };
+use itertools::Itertools;
 use phantom_zone::{aggregate_server_key_shares, ParameterSelector};
 
-pub const PARAMETER: ParameterSelector = ParameterSelector::NonInteractiveLTE40PartyExperimental;
+pub const PARAMETER: ParameterSelector = ParameterSelector::NonInteractiveLTE4Party;
 
 /// Server work
 /// Warning: global variable change
@@ -18,17 +19,52 @@ pub(crate) fn derive_server_key(server_key_shares: &[ServerKeyShare]) {
     server_key.set_server_key();
 }
 
-pub(crate) fn evaluate_circuit(ua: UserAction) {
+pub(crate) fn evaluate_circuit(
+    state: GameStateEnc,
+    uas: &[(UserId, UserAction<Word>)],
+) -> GameStateEnc {
+    let mut state = state.clone();
+    for (user_id, ua) in uas {
+        println!("Apply action {} for user {}", ua, user_id);
+        state = apply_action(state, *user_id, ua);
+    }
+    state
+}
+
+pub(crate) fn get_cells(state: &GameStateEnc, num_user: usize) -> Vec<Word> {
+    (0..num_user)
+        .map(|user_id| {
+            println!("Get cell for user {}", user_id);
+            get_cell(
+                &state.coords[user_id],
+                &state.eggs,
+                &state.coords.iter().flatten().cloned().collect_vec(),
+            )
+        })
+        .collect_vec()
+}
+
+pub(crate) fn apply_action(
+    state: GameStateEnc,
+    user_id: UserId,
+    ua: &UserAction<Word>,
+) -> GameStateEnc {
+    let mut next_state = state.clone();
     match ua {
-        UserAction::InitGame { initial_eggs } => todo!(),
-        UserAction::SetStartingCoords { starting_coords } => todo!(),
-        UserAction::MovePlayer { coords, direction } => move_player(&coords, &direction),
-        UserAction::LayEgg { coords, eggs } => lay_egg(&coords, &eggs),
-        UserAction::PickupEgg { coords, eggs } => pickup_egg(&coords, &eggs),
-        UserAction::GetCell {
-            coords,
-            eggs,
-            players,
-        } => get_cell(&coords, &eggs, &players),
+        UserAction::MovePlayer { coords, direction } => {
+            next_state.coords[user_id] = move_player(&coords, &direction);
+        }
+        UserAction::LayEgg { coords, eggs } => {
+            next_state.eggs = lay_egg(&coords, &eggs);
+        }
+        UserAction::PickupEgg { coords, eggs } => {
+            next_state.eggs = pickup_egg(&coords, &eggs);
+        }
+        UserAction::InitGame { .. }
+        | UserAction::SetStartingCoords { .. }
+        | UserAction::GetCell { .. } => {
+            unreachable!("Shouldn't be in the action queue")
+        }
     };
+    next_state
 }

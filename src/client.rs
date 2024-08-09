@@ -1,8 +1,8 @@
 use crate::{
     dashboard::{Dashboard, RegisteredUser},
     types::{
-        CircuitOutput, DecryptionShare, DecryptionShareSubmission, Seed, ServerKeyShare,
-        ServerState, SksSubmission, UserAction, UserId, Word,
+        CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Seed,
+        ServerKeyShare, ServerState, SksSubmission, UserAction, UserId, Word,
     },
 };
 use anyhow::{anyhow, bail, Error};
@@ -139,15 +139,23 @@ impl WebClient {
         self.post_msgpack("/submit_sks", &submission).await
     }
 
-    async fn request_action(&self, user_id: UserId, action: &UserAction) -> Result<UserId, Error> {
+    async fn request_action(
+        &self,
+        user_id: UserId,
+        action: &UserAction<EncryptedWord>,
+    ) -> Result<UserId, Error> {
         self.post_msgpack(&format!("/request_action/{user_id}"), action)
             .await
     }
 
     /// This function can only be called by user 0
-    pub async fn init_game(&self, user_id: UserId, initial_eggs: &Word) -> Result<UserId, Error> {
+    pub async fn init_game(
+        &self,
+        user_id: UserId,
+        initial_eggs: &EncryptedWord,
+    ) -> Result<UserId, Error> {
         let action = UserAction::InitGame {
-            initial_eggs: initial_eggs.to_vec(),
+            initial_eggs: initial_eggs.clone(),
         };
         self.request_action(user_id, &action).await
     }
@@ -155,10 +163,10 @@ impl WebClient {
     pub async fn set_starting_coords(
         &self,
         user_id: UserId,
-        starting_coords: &Word,
+        starting_coords: &EncryptedWord,
     ) -> Result<UserId, Error> {
         let action = UserAction::SetStartingCoords {
-            starting_coords: starting_coords.to_vec(),
+            starting_coords: starting_coords.clone(),
         };
         self.request_action(user_id, &action).await
     }
@@ -169,8 +177,8 @@ impl WebClient {
     pub async fn move_player(
         &self,
         user_id: UserId,
-        coords: Word,
-        direction: Word,
+        coords: EncryptedWord,
+        direction: EncryptedWord,
     ) -> Result<UserId, Error> {
         let action = UserAction::MovePlayer { coords, direction };
         self.request_action(user_id, &action).await
@@ -179,8 +187,8 @@ impl WebClient {
     pub async fn lay_egg(
         &self,
         user_id: UserId,
-        coords: Word,
-        eggs: Word,
+        coords: EncryptedWord,
+        eggs: EncryptedWord,
     ) -> Result<UserId, Error> {
         let action = UserAction::LayEgg { coords, eggs };
         self.request_action(user_id, &action).await
@@ -189,8 +197,8 @@ impl WebClient {
     pub async fn pickup_egg(
         &self,
         user_id: UserId,
-        coords: Word,
-        eggs: Word,
+        coords: EncryptedWord,
+        eggs: EncryptedWord,
     ) -> Result<UserId, Error> {
         let action = UserAction::PickupEgg { coords, eggs };
         self.request_action(user_id, &action).await
@@ -201,9 +209,9 @@ impl WebClient {
     pub async fn get_cell(
         &self,
         user_id: usize,
-        coords: Word,
-        eggs: Word,
-        players: Word,
+        coords: EncryptedWord,
+        eggs: EncryptedWord,
+        players: EncryptedWord,
     ) -> Result<UserId, Error> {
         let action = UserAction::GetCell {
             coords,
