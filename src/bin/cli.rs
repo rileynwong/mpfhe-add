@@ -2,8 +2,8 @@ use anyhow::{anyhow, bail, ensure, Error};
 use clap::{command, Parser};
 use itertools::Itertools;
 use karma_calculator::{
-    setup, CircuitOutput, DecryptionSharesMap, UserAction, Score, ServerState, UserId,
-    WebClient,
+    gen_decryption_shares, setup, AnnotatedDecryptionShare, CircuitOutput, DecryptionShare,
+    DecryptionSharesMap, Score, ServerState, UserAction, UserId, WebClient, Word,
 };
 use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
 use rustyline::{error::ReadlineError, DefaultEditor};
@@ -286,13 +286,15 @@ async fn cmd_download_output(
 
     println!("Generating my decrypting shares");
     let mut shares = HashMap::new();
-    let my_decryption_shares = fhe_out.gen_decryption_shares(ck);
+    let my_decryption_shares: Vec<DecryptionShare> = fhe_out.gen_decryption_shares(ck);
+    let mut my_decryption_shares_2: Vec<AnnotatedDecryptionShare> = vec![];
     for (out_id, share) in my_decryption_shares.iter().enumerate() {
         shares.insert((out_id, *user_id), share.to_vec());
+        my_decryption_shares_2.push((out_id, share.clone()));
     }
     println!("Submitting my decrypting shares");
     client
-        .submit_decryption_shares(*user_id, &my_decryption_shares)
+        .submit_decryption_shares(*user_id, &my_decryption_shares_2)
         .await?;
     Ok((fhe_out, shares))
 }

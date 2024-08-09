@@ -1,8 +1,10 @@
 use crate::{
-    dashboard::{Dashboard, RegisteredUser}, types::{
+    dashboard::{Dashboard, RegisteredUser},
+    types::{
         CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Seed,
         ServerKeyShare, ServerState, SksSubmission, UserAction, UserId, Word,
-    }, AnnotatedDecryptionShare, ClientKey, Direction
+    },
+    AnnotatedDecryptionShare, ClientKey, Direction,
 };
 use anyhow::{anyhow, bail, Error};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -207,7 +209,7 @@ impl WebClient {
         self.post_nobody("/run").await
     }
 
-    pub async fn get_fhe_output(&self) -> Result<Vec<Word>, Error> {
+    pub async fn get_fhe_output(&self) -> Result<CircuitOutput, Error> {
         self.get("/fhe_output").await
     }
 
