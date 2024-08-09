@@ -41,7 +41,7 @@ impl From<&UserRecord> for RegisteredUser {
         use crate::types::UserStorage::*;
         let status = match user.storage {
             Empty => UserStatus::IDAcquired,
-            CipherSks(_, _) => UserStatus::CipherSubmitted,
+            Sks(_) => UserStatus::CipherSubmitted,
             DecryptionShare(_) => UserStatus::DecryptionShareSubmitted,
         };
 

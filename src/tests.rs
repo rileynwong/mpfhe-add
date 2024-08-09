@@ -213,7 +213,7 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
         println!("{} submit key and cipher", user.name);
     });
 
-    async fn submit_cipher(client: &WebClient, user: &mut User) {
+    for user in users.iter_mut() {
         let user_id = user.id.unwrap();
         let cipher_text = user.cipher.as_ref().unwrap();
         let sks = user.server_key.as_ref().unwrap();
@@ -224,15 +224,10 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
             println!("sks size {}", sks.len());
         }
         println!("Submit cipher and server key");
-        client
-            .submit_cipher(user_id, &cipher_text, &sks)
-            .await
-            .unwrap();
+        client.submit_sks(user_id, &sks).await.unwrap();
         // Drop here to save mem
         user.server_key = None;
     }
-    // Submit cipher in concurrent
-    join_all(users.iter_mut().map(|user| submit_cipher(&client, user))).await;
 
     // Admin runs the FHE computation
     client.trigger_fhe_run().await.unwrap();

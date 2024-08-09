@@ -259,8 +259,8 @@ async fn cmd_score_encrypt(
     println!("Generating server key share");
     let sks = gen_server_key_share(*user_id, total_users, ck);
 
-    println!("Submit the cipher and the server key share");
-    // client.submit_cipher(*user_id, &ei, &sks).await?;
+    println!("Submit server key share");
+    client.submit_sks(*user_id, &sks).await?;
     Ok(scores)
 }
 

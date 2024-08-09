@@ -1,8 +1,8 @@
 use crate::{
     dashboard::{Dashboard, RegisteredUser},
     types::{
-        CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedInput, InputSubmission,
-        Seed, ServerKeyShare, ServerState, UserId,
+        CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedInput, Seed,
+        ServerKeyShare, ServerState, SksSubmission, UserId,
     },
 };
 use anyhow::{anyhow, bail, Error};
@@ -129,6 +129,14 @@ impl WebClient {
 
     pub async fn get_dashboard(&self) -> Result<Dashboard, Error> {
         self.get("/dashboard").await
+    }
+
+    pub async fn submit_sks(&self, user_id: UserId, sks: &ServerKeyShare) -> Result<UserId, Error> {
+        let submission = SksSubmission {
+            user_id,
+            sks: sks.clone(),
+        };
+        self.post_msgpack("/submit_sks", &submission).await
     }
 
     // // This function can only be called by user 0

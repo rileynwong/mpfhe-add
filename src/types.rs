@@ -246,24 +246,20 @@ impl ServerStorage {
     pub(crate) fn check_cipher_submission(&self) -> bool {
         self.users
             .iter()
-            .all(|user| matches!(user.storage, UserStorage::CipherSks(..)))
+            .all(|user| matches!(user.storage, UserStorage::Sks(..)))
     }
 
-    pub(crate) fn get_ciphers_and_sks(
-        &mut self,
-    ) -> Result<(Vec<ServerKeyShare>, Vec<EncryptedInput>), Error> {
+    pub(crate) fn get_sks(&mut self) -> Result<Vec<ServerKeyShare>, Error> {
         let mut server_key_shares = vec![];
-        let mut ciphers = vec![];
         for (user_id, user) in self.users.iter_mut().enumerate() {
-            if let Some((cipher, sks)) = user.storage.get_cipher_sks() {
+            if let Some(sks) = user.storage.get_cipher_sks() {
                 server_key_shares.push(sks.clone());
-                ciphers.push(cipher.clone());
                 user.storage = UserStorage::DecryptionShare(None);
             } else {
                 return Err(Error::CipherNotFound { user_id });
             }
         }
-        Ok((server_key_shares, ciphers))
+        Ok(server_key_shares)
     }
 
     pub(crate) fn get_dashboard(&self) -> Dashboard {
@@ -281,14 +277,14 @@ pub(crate) struct UserRecord {
 #[derive(Debug, Clone)]
 pub(crate) enum UserStorage {
     Empty,
-    CipherSks(EncryptedInput, Box<ServerKeyShare>),
+    Sks(Box<ServerKeyShare>),
     DecryptionShare(Option<Vec<DecryptionShare>>),
 }
 
 impl UserStorage {
-    pub(crate) fn get_cipher_sks(&self) -> Option<(&EncryptedInput, &ServerKeyShare)> {
+    pub(crate) fn get_cipher_sks(&self) -> Option<&ServerKeyShare> {
         match self {
-            Self::CipherSks(cipher, sks) => Some((cipher, sks)),
+            Self::Sks(sks) => Some(sks),
             _ => None,
         }
     }
@@ -306,19 +302,10 @@ impl UserStorage {
 /// ([`Word`] index, user_id) -> decryption share
 pub type DecryptionSharesMap = HashMap<(usize, UserId), DecryptionShare>;
 
-// #[derive(Serialize, Deserialize)]
-// #[serde(crate = "rocket::serde")]
-// pub(crate) struct CipherSubmission {
-//     pub(crate) user_id: UserId,
-//     pub(crate) cipher_text: Cipher,
-//     pub(crate) sks: ServerKeyShare,
-// }
-
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
-pub(crate) struct InputSubmission {
+pub(crate) struct SksSubmission {
     pub(crate) user_id: UserId,
-    pub(crate) ei: EncryptedInput,
     pub(crate) sks: ServerKeyShare,
 }
 

@@ -1,11 +1,10 @@
 use crate::circuit::{derive_server_key, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
-use crate::time;
+
 use crate::types::{
     CircuitOutput, DecryptionShare, DecryptionShareSubmission, Error, ErrorResponse,
-    InputSubmission, MutexServerStorage, Seed, ServerState, ServerStorage, UserId, UserStorage,
+    MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId, UserStorage,
 };
-use itertools::Itertools;
 use phantom_zone::{set_common_reference_seed, set_parameter_set};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
@@ -47,21 +46,21 @@ async fn get_dashboard(ss: &State<MutexServerStorage>) -> Json<Dashboard> {
     Json(dashboard)
 }
 
-/// The user submits the ciphertext
-#[post("/submit", data = "<submission>", format = "msgpack")]
-async fn submit(
-    submission: MsgPack<InputSubmission>,
+/// The user submits Server key shares
+#[post("/submit_sks", data = "<submission>", format = "msgpack")]
+async fn submit_sks(
+    submission: MsgPack<SksSubmission>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let mut ss = ss.lock().await;
 
     ss.ensure(ServerState::ReadyForInputs)?;
 
-    let InputSubmission { user_id, ei, sks } = submission.0;
+    let SksSubmission { user_id, sks } = submission.0;
 
     let user = ss.get_user(user_id)?;
     println!("{} submited data", user.name);
-    user.storage = UserStorage::CipherSks(ei, Box::new(sks));
+    user.storage = UserStorage::Sks(Box::new(sks));
 
     if ss.check_cipher_submission() {
         ss.transit(ServerState::ReadyForRunning);
@@ -78,7 +77,7 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
 
     match &ss.state {
         ServerState::ReadyForRunning => {
-            let (server_key_shares, encrypted_inputs) = ss.get_ciphers_and_sks()?;
+            let server_key_shares = ss.get_sks()?;
 
             tokio::task::spawn_blocking(move || {
                 rayon::ThreadPoolBuilder::new()
@@ -94,13 +93,6 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                 println!("Begin FHE run");
                                 // Long running, global variable change
                                 derive_server_key(&server_key_shares);
-
-                                // Unpack to get circuit inputs
-                                let cis = encrypted_inputs
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(user_id, ei)| ei.unpack(user_id))
-                                    .collect_vec();
 
                                 // Long running
                                 let mut ss = s2.blocking_lock();
@@ -195,7 +187,7 @@ pub fn rocket() -> Rocket<Build> {
                 get_param,
                 register,
                 get_dashboard,
-                submit,
+                submit_sks,
                 run,
                 get_fhe_output,
                 submit_decryption_shares,
