@@ -203,8 +203,20 @@ async fn cmd_setup_game(client: &WebClient, ck: &ClientKey, user_id: UserId) -> 
     Ok(())
 }
 
-async fn cmd_move(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
-    let direction = Direction::Up;
+async fn cmd_move(
+    args: &[&str],
+    client: &WebClient,
+    ck: &ClientKey,
+    user_id: UserId,
+) -> Result<(), Error> {
+    let direction = match args[0] {
+        "up" => Direction::Up,
+        "down" => Direction::Down,
+        "left" => Direction::Left,
+        "right" => Direction::Right,
+        &_ => bail!("invalid commmit"),
+    };
+
     client.move_player(ck, user_id, direction).await?;
     Ok(())
 }
@@ -420,7 +432,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
         }
     } else if cmd == &"move" {
         match state {
-            State::SubmittedSks(s) => match cmd_move(&s.client, &s.ck, s.user_id).await {
+            State::SubmittedSks(s) => match cmd_move(args, &s.client, &s.ck, s.user_id).await {
                 Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
                     name: s.name,
                     client: s.client,
