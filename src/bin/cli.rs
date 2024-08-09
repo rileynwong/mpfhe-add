@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, ensure, Error};
 use clap::{command, Parser};
 use itertools::Itertools;
 use karma_calculator::{
-    setup, CircuitOutput, DecryptionSharesMap, EncryptedInput, Score, ServerState, UserId,
+    setup, CircuitOutput, DecryptionSharesMap, UserAction, Score, ServerState, UserId,
     WebClient,
 };
 use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
@@ -254,7 +254,7 @@ async fn cmd_score_encrypt(
     }
     println!("I gave out {total} karma");
 
-    let ei = EncryptedInput::from_plain(ck, &scores);
+    let ei = UserAction::from_plain(ck, &scores);
 
     println!("Generating server key share");
     let sks = gen_server_key_share(*user_id, total_users, ck);

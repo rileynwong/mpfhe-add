@@ -1,7 +1,7 @@
 use crate::{
     dashboard::{Dashboard, RegisteredUser},
     types::{
-        CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedInput, Seed,
+        CircuitOutput, DecryptionShare, DecryptionShareSubmission, UserAction, Seed,
         ServerKeyShare, ServerState, SksSubmission, UserId,
     },
 };

@@ -35,17 +35,22 @@ type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 
 /// Encrypted input words contributed from one user
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EncryptedInput {
-    karma_sent: Vec<EncryptedWord>,
+pub enum UserAction {
+    InitGame { initial_eggs: Word },
+    SetStartingCoords { starting_coords: Word },
+    MovePlayer,
+    LayEgg,
+    PickupEgg,
+    GetCell,
 }
 
-impl EncryptedInput {
+impl UserAction {
     pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
+        todo!();
         let cipher = karma
             .iter()
             .map(|score| encrypt_plain(ck, *score))
             .collect_vec();
-        Self { karma_sent: cipher }
     }
 
     /// Unpack ciphers
@@ -54,14 +59,15 @@ impl EncryptedInput {
     /// 2. Key Switch: We reencrypt the cipher with the server key for the computation. We need to specify the original signer of the cipher.
     /// 3. Extract: A user's encrypted inputs are packed in a batched struct. We call `extract_all` method to convert it to unbatched word.
     pub(crate) fn unpack(&self, user_id: UserId) -> CircuitInput {
-        self.karma_sent
-            .iter()
-            .map(|word| {
-                word.unseed::<Vec<Vec<u64>>>()
-                    .key_switch(user_id)
-                    .extract_all()
-            })
-            .collect_vec()
+        todo!();
+        // self.karma_sent
+        //     .iter()
+        //     .map(|word| {
+        //         word.unseed::<Vec<Vec<u64>>>()
+        //             .key_switch(user_id)
+        //             .extract_all()
+        //     })
+        //     .collect_vec()
     }
 }
 
