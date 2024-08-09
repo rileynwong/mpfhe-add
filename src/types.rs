@@ -30,8 +30,38 @@ pub(crate) type CircuitInput = Vec<Word>;
 /// Decryption share for a word from one user.
 pub(crate) type DecryptionShare = Vec<u64>;
 
+pub type Coord = u8;
+
 type PlainWord = i16;
 pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
+
+fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
+    let mut result = [false; N];
+    for i in 0..N / 2 {
+        if (x >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    for i in N / 2..N {
+        if (y >> i) & 1 == 1 {
+            result[i] = true;
+        }
+    }
+    result
+}
+
+pub struct GameState {
+    /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
+    coords: Vec<(u8, u8)>,
+    /// example: [false; BOARD_SIZE];
+    eggs: Vec<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GameStateEnc {
+    pub coords: Vec<Word>,
+    pub eggs: Word,
+}
 
 /// Encrypted input words contributed from one user
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,6 +214,8 @@ pub(crate) enum Error {
     /// Temporary here
     #[error("Output not ready")]
     OutputNotReady,
+    #[error("Init action not performed yet")]
+    GameNotInitedYet,
 }
 
 #[derive(Responder)]
@@ -197,9 +229,9 @@ pub(crate) enum ErrorResponse {
 impl From<Error> for ErrorResponse {
     fn from(error: Error) -> Self {
         match error {
-            Error::WrongServerState { .. } | Error::CipherNotFound { .. } => {
-                ErrorResponse::ServerError(error.to_string())
-            }
+            Error::WrongServerState { .. }
+            | Error::CipherNotFound { .. }
+            | Error::GameNotInitedYet => ErrorResponse::ServerError(error.to_string()),
             Error::DecryptionShareNotFound { .. }
             | Error::UnregisteredUser { .. }
             | Error::OutputNotReady => ErrorResponse::NotFoundError(error.to_string()),
@@ -247,12 +279,11 @@ pub(crate) type MutexServerStorage = Arc<Mutex<ServerStorage>>;
 pub(crate) struct ServerStorage {
     pub(crate) seed: Seed,
     pub(crate) state: ServerState,
-    /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
-    pub(crate) coords: Option<Word>,
-    /// example: [false; BOARD_SIZE];
-    pub(crate) eggs: Option<Word>,
-    pub(crate) action_queue: Vec<UserAction<Word>>,
     pub(crate) users: Vec<UserRecord>,
+
+    pub(crate) game_state: Option<GameStateEnc>,
+    pub(crate) action_queue: Vec<(UserId, UserAction<Word>)>,
+    pub(crate) cells: Option<Vec<Word>>,
 }
 
 impl ServerStorage {
@@ -260,10 +291,11 @@ impl ServerStorage {
         Self {
             seed,
             state: ServerState::ReadyForJoining,
-            coords: None,
-            eggs: None,
             users: vec![],
+
+            game_state: None,
             action_queue: vec![],
+            cells: None,
         }
     }
 

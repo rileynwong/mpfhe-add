@@ -1,4 +1,4 @@
-use crate::circuit::{derive_server_key, PARAMETER};
+use crate::circuit::{derive_server_key, evaluate_circuit, get_cells, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
 
 use crate::types::{
@@ -107,6 +107,8 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
     match &ss.state {
         ServerState::ReadyForRunning => {
             let server_key_shares = ss.get_sks()?;
+            let game_state = ss.game_state.clone().ok_or(Error::GameNotInitedYet)?;
+            let uas = ss.action_queue.clone();
 
             tokio::task::spawn_blocking(move || {
                 rayon::ThreadPoolBuilder::new()
@@ -124,8 +126,11 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                 derive_server_key(&server_key_shares);
 
                                 // Long running
+                                let final_game_state = evaluate_circuit(game_state, &uas);
+                                let cells = get_cells(&final_game_state, 4);
                                 let mut ss = s2.blocking_lock();
-                                // ss.fhe_outputs = None;
+                                ss.game_state = Some(final_game_state);
+                                ss.cells = Some(cells);
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
                             })
