@@ -3,15 +3,12 @@ use clap::{command, Parser};
 use itertools::Itertools;
 use karma_calculator::{
     gen_decryption_shares, setup, AnnotatedDecryptionShare, CircuitOutput, DecryptionShare,
-    DecryptionSharesMap, Score, ServerState, UserAction, UserId, WebClient, Word,
+    DecryptionSharesMap, Direction, Score, ServerState, UserAction, UserId, WebClient, Word,
 };
 use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
 use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{collections::HashMap, fmt::Display, iter::zip};
 use tabled::{settings::Style, Table, Tabled};
-
-/// HACK: Bound max input value on client side;
-const MAX_INPUT_VALUE: Score = 1000;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -24,7 +21,7 @@ struct Cli2 {
 enum State {
     Init(StateInit),
     Setup(StateSetup),
-    ConcludedRegistration(ConcludedRegistration),
+    SubmittedSks(SubmittedSks),
     SubmittedInput(SubmittedInput),
     TriggeredRun(StateTriggeredRun),
     DownloadedOutput(StateDownloadedOuput),
@@ -36,7 +33,7 @@ impl Display for State {
         let label = match self {
             State::Init(_) => "Initialization",
             State::Setup(_) => "Setup",
-            State::ConcludedRegistration(_) => "Concluded Registration",
+            State::SubmittedSks(_) => "SubmittedSks",
             State::SubmittedInput(_) => "Encrypted Input",
             State::TriggeredRun(_) => "Triggered Run",
             State::DownloadedOutput(_) => "Downloaded Output",
@@ -53,7 +50,7 @@ impl State {
                 format!("Hi {}, we just connected to server {}.", name, client.url())
             }
             State::Setup(StateSetup { .. }) => "✅ Setup completed!".to_string(),
-            State::ConcludedRegistration(_) => "✅ Users' names acquired!".to_string(),
+            State::SubmittedSks(_) => "Sks sent".to_string(),
             State::SubmittedInput(_) => "✅ Ciphertext submitted!".to_string(),
             State::TriggeredRun(_) => "✅ FHE run triggered!".to_string(),
             State::DownloadedOutput(_) => "✅ FHE output downloaded!".to_string(),
@@ -65,24 +62,6 @@ impl State {
     fn print_instruction(&self) {
         let msg = match self {
             State::Setup(_) => "Enter `conclude` to end registration or `next` to proceed",
-            State::ConcludedRegistration(ConcludedRegistration { names, .. }) => {
-                let total_users = names.len();
-                &[
-                    "Enter `next` with Karma values you'd like to send to each user.",
-                    &format!(
-                        "Example: `next {}`",
-                        (0..total_users)
-                            .map(|n| n.to_string())
-                            .collect::<Vec<String>>()
-                            .join(" ")
-                    ),
-                    &format!(
-                        "(Maxium Karma you can send for each user: {})",
-                        MAX_INPUT_VALUE
-                    ),
-                ]
-                .join("\n")
-            }
             State::Decrypted(_) => "Exit with `CTRL-D`",
             _ => "Enter `next` to continue",
         };
@@ -102,7 +81,7 @@ struct StateSetup {
     user_id: UserId,
 }
 
-struct ConcludedRegistration {
+struct SubmittedSks {
     name: String,
     client: WebClient,
     ck: ClientKey,
@@ -116,7 +95,6 @@ struct SubmittedInput {
     ck: ClientKey,
     user_id: UserId,
     names: Vec<String>,
-    scores: Vec<Score>,
 }
 
 struct StateTriggeredRun {
@@ -125,7 +103,6 @@ struct StateTriggeredRun {
     ck: ClientKey,
     user_id: UserId,
     names: Vec<String>,
-    scores: Vec<Score>,
 }
 
 struct StateDownloadedOuput {
@@ -134,7 +111,6 @@ struct StateDownloadedOuput {
     client: WebClient,
     ck: ClientKey,
     names: Vec<String>,
-    scores: Vec<Score>,
     fhe_out: CircuitOutput,
     shares: DecryptionSharesMap,
 }
@@ -142,7 +118,6 @@ struct StateDownloadedOuput {
 struct StateDecrypted {
     names: Vec<String>,
     client: WebClient,
-    scores: Vec<Score>,
     decrypted_output: Vec<Score>,
 }
 
@@ -214,54 +189,61 @@ async fn cmd_get_names(client: &WebClient) -> Result<(bool, Vec<String>), Error>
     Ok((d.is_concluded(), d.get_names()))
 }
 
-async fn cmd_conclude_registration(client: &WebClient) -> Result<Vec<String>, Error> {
-    todo!()
+async fn cmd_init(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
+    let initial_eggs = [true];
+    client.init_game(ck, user_id, &initial_eggs).await?;
+    Ok(())
 }
 
-async fn cmd_score_encrypt(
+async fn cmd_setup_game(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
+    let starting_coords = [];
+    client
+        .set_starting_coords(ck, user_id, &starting_coords)
+        .await?;
+    Ok(())
+}
+
+async fn cmd_move(
+    args: &[&str],
+    client: &WebClient,
+    ck: &ClientKey,
+    user_id: UserId,
+) -> Result<(), Error> {
+    let direction = match args[0] {
+        "up" => Direction::Up,
+        "down" => Direction::Down,
+        "left" => Direction::Left,
+        "right" => Direction::Right,
+        &_ => bail!("invalid commmit"),
+    };
+
+    client.move_player(ck, user_id, direction).await?;
+    Ok(())
+}
+
+async fn cmd_lay(client: &WebClient, user_id: UserId) -> Result<(), Error> {
+    client.lay_egg(user_id).await?;
+    Ok(())
+}
+
+async fn cmd_pickup(client: &WebClient, user_id: UserId) -> Result<(), Error> {
+    client.pickup_egg(user_id).await?;
+    Ok(())
+}
+
+async fn cmd_submit_sks(
     args: &[&str],
     client: &WebClient,
     user_id: &UserId,
     names: &Vec<String>,
     ck: &ClientKey,
-) -> Result<Vec<Score>, Error> {
-    let total_users = names.len();
-    let scores: Result<Vec<_>, Error> = args
-        .iter()
-        .map(|s| {
-            s.parse::<Score>()
-                .map_err(|err| anyhow::format_err!(err.to_string()))
-        })
-        .collect_vec()
-        .into_iter()
-        .collect();
-    let scores = scores?;
-    ensure!(
-        scores.len() == total_users,
-        "Mismatch scores and user number. Score: {}, users: {}",
-        scores.len(),
-        total_users
-    );
-    ensure!(
-        scores.iter().all(|&x| x <= MAX_INPUT_VALUE && x >= 0),
-        "All scores should be in range of 0 to {}. Scores: {:#?}",
-        MAX_INPUT_VALUE,
-        scores,
-    );
-    let total: Score = scores.iter().sum();
-    for (name, score) in zip(names, scores.iter()) {
-        println!("Give {name} {score} karma");
-    }
-    println!("I gave out {total} karma");
-
-    let ei = UserAction::from_plain(ck, &scores);
-
+) -> Result<(), Error> {
+    let total_users = 4;
     println!("Generating server key share");
     let sks = gen_server_key_share(*user_id, total_users, ck);
-
     println!("Submit server key share");
     client.submit_sks(*user_id, &sks).await?;
-    Ok(scores)
+    Ok(())
 }
 
 async fn cmd_run(client: &WebClient) -> Result<(), Error> {
@@ -303,7 +285,6 @@ async fn cmd_download_shares(
     ck: &ClientKey,
     shares: &mut HashMap<(usize, usize), Vec<u64>>,
     co: &CircuitOutput,
-    scores: &[Score],
 ) -> Result<Vec<Score>, Error> {
     let total_users = names.len();
     println!("Acquiring decryption shares needed");
@@ -328,7 +309,6 @@ async fn cmd_download_shares(
         .collect_vec();
     let decrypted_output = co.decrypt(ck, &dss);
     println!("Final decrypted output:");
-    present_balance(names, scores, &decrypted_output);
     Ok(decrypted_output)
 }
 
@@ -353,7 +333,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             State::Setup(s) => match cmd_get_names(&s.client).await {
                 Ok((is_concluded, names)) => {
                     if is_concluded {
-                        Ok(State::ConcludedRegistration(ConcludedRegistration {
+                        Ok(State::SubmittedSks(SubmittedSks {
                             name: s.name,
                             client: s.client,
                             ck: s.ck,
@@ -366,17 +346,16 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 }
                 Err(err) => Err((err, State::Setup(s))),
             },
-            State::ConcludedRegistration(s) => {
-                match cmd_score_encrypt(args, &s.client, &s.user_id, &s.names, &s.ck).await {
-                    Ok(scores) => Ok(State::SubmittedInput(SubmittedInput {
+            State::SubmittedSks(s) => {
+                match cmd_submit_sks(args, &s.client, &s.user_id, &s.names, &s.ck).await {
+                    Ok(()) => Ok(State::SubmittedInput(SubmittedInput {
                         name: s.name,
                         client: s.client,
                         ck: s.ck,
                         user_id: s.user_id,
                         names: s.names,
-                        scores,
                     })),
-                    Err(err) => Err((err, State::ConcludedRegistration(s))),
+                    Err(err) => Err((err, State::SubmittedSks(s))),
                 }
             }
             State::SubmittedInput(s) => match cmd_run(&s.client).await {
@@ -386,7 +365,6 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     ck: s.ck,
                     user_id: s.user_id,
                     names: s.names,
-                    scores: s.scores,
                 })),
                 Err(err) => Err((err, State::SubmittedInput(s))),
             },
@@ -397,28 +375,19 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     client: s.client,
                     ck: s.ck,
                     names: s.names,
-                    scores: s.scores,
                     fhe_out,
                     shares,
                 })),
                 Err(err) => Err((err, State::TriggeredRun(s))),
             },
             State::DownloadedOutput(mut s) => {
-                match cmd_download_shares(
-                    &s.client,
-                    &s.names,
-                    &s.ck,
-                    &mut s.shares,
-                    &s.fhe_out,
-                    &s.scores,
-                )
-                .await
+                match cmd_download_shares(&s.client, &s.names, &s.ck, &mut s.shares, &s.fhe_out)
+                    .await
                 {
                     Ok(decrypted_output) => Ok(State::Decrypted(StateDecrypted {
                         names: s.names,
                         client: s.client,
                         decrypted_output,
-                        scores: s.scores,
                     })),
                     Err(err) => Err((err, State::DownloadedOutput(s))),
                 }
@@ -427,36 +396,98 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 names,
                 client,
                 decrypted_output,
-                scores,
-            }) => {
-                present_balance(&names, &scores, &decrypted_output);
-                Ok(State::Decrypted(StateDecrypted {
-                    names,
-                    client,
-                    decrypted_output,
-                    scores,
-                }))
-            }
+            }) => Ok(State::Decrypted(StateDecrypted {
+                names,
+                client,
+                decrypted_output,
+            })),
         }
-    } else if cmd == &"conclude" {
+    } else if cmd == &"init" {
         match state {
-            State::Setup(s) => match cmd_conclude_registration(&s.client).await {
-                Ok(names) => Ok(State::ConcludedRegistration(ConcludedRegistration {
+            State::SubmittedSks(s) => match cmd_init(&s.client, &s.ck, s.user_id).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
                     name: s.name,
                     client: s.client,
                     ck: s.ck,
                     user_id: s.user_id,
-                    names,
+                    names: s.names,
                 })),
-                Err(err) => Err((err, State::Setup(s))),
+                Err(err) => Err((err, State::SubmittedSks(s))),
             },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
+    } else if cmd == &"setup_game" {
+        match state {
+            State::SubmittedSks(s) => match cmd_setup_game(&s.client, &s.ck, s.user_id).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
+    } else if cmd == &"move" {
+        match state {
+            State::SubmittedSks(s) => match cmd_move(args, &s.client, &s.ck, s.user_id).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
+    } else if cmd == &"lay" {
+        match state {
+            State::SubmittedSks(s) => match cmd_lay(&s.client, s.user_id).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
+    } else if cmd == &"pickup" {
+        match state {
+            State::SubmittedSks(s) => match cmd_pickup(&s.client, s.user_id).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
+    } else if cmd == &"done" {
+        match state {
+            State::SubmittedSks(s) => Ok(State::SubmittedInput(SubmittedInput {
+                name: s.name,
+                client: s.client,
+                ck: s.ck,
+                user_id: s.user_id,
+                names: s.names,
+            })),
             _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
         }
     } else if cmd == &"status" {
         match &state {
             State::Init(StateInit { client, .. })
             | State::Setup(StateSetup { client, .. })
-            | State::ConcludedRegistration(ConcludedRegistration { client, .. })
+            | State::SubmittedSks(SubmittedSks { client, .. })
             | State::SubmittedInput(SubmittedInput { client, .. })
             | State::TriggeredRun(StateTriggeredRun { client, .. })
             | State::DownloadedOutput(StateDownloadedOuput { client, .. })
