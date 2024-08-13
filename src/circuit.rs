@@ -5,7 +5,7 @@ use crate::{
     UserAction, UserId,
 };
 use itertools::Itertools;
-use phantom_zone::{aggregate_server_key_shares, ParameterSelector};
+use phantom_zone::{aggregate_server_key_shares, set_parameter_set, ParameterSelector};
 
 pub const PARAMETER: ParameterSelector = ParameterSelector::NonInteractiveLTE4Party;
 
@@ -35,6 +35,7 @@ pub(crate) fn get_cells(state: &GameStateEnc, num_user: usize) -> Vec<Word> {
     (0..num_user)
         .map(|user_id| {
             println!("Get cell for user {}", user_id);
+            set_parameter_set(PARAMETER);
             get_cell(
                 &state.coords[user_id],
                 &state.eggs,
@@ -50,6 +51,7 @@ pub(crate) fn apply_action(
     ua: &UserAction<Word>,
 ) -> GameStateEnc {
     let mut next_state = state.clone();
+    set_parameter_set(PARAMETER);
     match ua {
         UserAction::MovePlayer { direction } => {
             next_state.coords[user_id] = move_player(&state.coords[user_id], &direction);
@@ -62,7 +64,8 @@ pub(crate) fn apply_action(
         }
         UserAction::InitGame { .. }
         | UserAction::SetStartingCoords { .. }
-        | UserAction::GetCell { .. } => {
+        | UserAction::GetCell { .. }
+        | UserAction::Done => {
             unreachable!("Shouldn't be in the action queue")
         }
     };

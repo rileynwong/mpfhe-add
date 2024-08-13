@@ -1,5 +1,7 @@
+use crate::circuit::PARAMETER;
 use crate::dashboard::{Dashboard, RegisteredUser};
 use itertools::Itertools;
+use phantom_zone::set_parameter_set;
 use phantom_zone::{
     evaluator::NonInteractiveMultiPartyCrs,
     keys::CommonReferenceSeededNonInteractiveMultiPartyServerKeyShare, parameters::BoolParameters,
@@ -139,6 +141,7 @@ pub enum UserAction<T> {
     LayEgg,
     PickupEgg,
     GetCell,
+    Done,
 }
 
 impl<T> Display for UserAction<T> {
@@ -150,6 +153,7 @@ impl<T> Display for UserAction<T> {
             UserAction::LayEgg { .. } => "LayEgg",
             UserAction::PickupEgg { .. } => "PickupEgg",
             UserAction::GetCell { .. } => "GetCell",
+            UserAction::Done => "Done",
         };
         write!(f, "{}", text)
     }
@@ -181,6 +185,7 @@ impl UserAction<EncryptedWord> {
     }
 
     pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
+        set_parameter_set(PARAMETER);
         match &self {
             UserAction::InitGame { initial_eggs } => UserAction::InitGame {
                 initial_eggs: unpack_word(initial_eggs, user_id),
@@ -197,6 +202,7 @@ impl UserAction<EncryptedWord> {
             UserAction::LayEgg => UserAction::LayEgg,
             UserAction::PickupEgg => UserAction::PickupEgg,
             UserAction::GetCell => UserAction::GetCell,
+            UserAction::Done => UserAction::Done,
         }
     }
 }
@@ -387,7 +393,8 @@ impl ServerStorage {
     }
 
     pub(crate) fn transit(&mut self, state: ServerState) {
-        self.state.transit(state)
+        self.state.transit(state.clone());
+        println!("Sever state {}", state);
     }
 
     pub(crate) fn get_user(&mut self, user_id: UserId) -> Result<&mut UserRecord, Error> {

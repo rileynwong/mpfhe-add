@@ -191,6 +191,10 @@ impl WebClient {
         self.request_action(user_id, &UserAction::PickupEgg).await
     }
 
+    pub async fn done(&self, user_id: UserId) -> Result<UserId, Error> {
+        self.request_action(user_id, &UserAction::Done).await
+    }
+
     /// After the actions submitted from all users,
     /// they can call get_cell
     pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {
@@ -230,7 +234,7 @@ impl WebClient {
         &self,
         output_id: usize,
         user_id: usize,
-    ) -> Result<DecryptionShare, Error> {
+    ) -> Result<AnnotatedDecryptionShare, Error> {
         self.get(&format!("/decryption_share/{output_id}/{user_id}"))
             .await
     }

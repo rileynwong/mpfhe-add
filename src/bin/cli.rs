@@ -4,6 +4,7 @@ use itertools::Itertools;
 use karma_calculator::{
     gen_decryption_shares, setup, AnnotatedDecryptionShare, CircuitOutput, DecryptionShare,
     DecryptionSharesMap, Direction, Score, ServerState, UserAction, UserId, WebClient, Word,
+    BOARD_SIZE,
 };
 use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
 use rustyline::{error::ReadlineError, DefaultEditor};
@@ -190,13 +191,13 @@ async fn cmd_get_names(client: &WebClient) -> Result<(bool, Vec<String>), Error>
 }
 
 async fn cmd_init(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
-    let initial_eggs = [true];
+    let initial_eggs = [false; BOARD_SIZE];
     client.init_game(ck, user_id, &initial_eggs).await?;
     Ok(())
 }
 
 async fn cmd_setup_game(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
-    let starting_coords = [];
+    let starting_coords = vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)];
     client
         .set_starting_coords(ck, user_id, &starting_coords)
         .await?;
@@ -231,6 +232,11 @@ async fn cmd_lay(client: &WebClient, user_id: UserId) -> Result<(), Error> {
 
 async fn cmd_pickup(client: &WebClient, user_id: UserId) -> Result<(), Error> {
     client.pickup_egg(user_id).await?;
+    Ok(())
+}
+
+async fn cmd_done(client: &WebClient, user_id: UserId) -> Result<(), Error> {
+    client.done(user_id).await?;
     Ok(())
 }
 
@@ -293,7 +299,7 @@ async fn cmd_download_shares(
     println!("Acquiring decryption shares needed");
     for (output_id, user_id) in (0..co.n()).cartesian_product(0..total_users) {
         if shares.get(&(output_id, user_id)).is_none() {
-            let ds = client.get_decryption_share(output_id, user_id).await?;
+            let (_, ds) = client.get_decryption_share(output_id, user_id).await?;
             shares.insert((output_id, user_id), ds);
         }
     }
@@ -311,7 +317,7 @@ async fn cmd_download_shares(
         })
         .collect_vec();
     let decrypted_output = co.decrypt(ck, &dss);
-    println!("Final decrypted output:");
+    println!("Final decrypted output: {:?}", decrypted_output);
     Ok(decrypted_output)
 }
 
@@ -477,13 +483,16 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
         }
     } else if cmd == &"done" {
         match state {
-            State::SubmittedSks(s) => Ok(State::SubmittedSks(SubmittedSks {
-                name: s.name,
-                client: s.client,
-                ck: s.ck,
-                user_id: s.user_id,
-                names: s.names,
-            })),
+            State::SubmittedSks(s) => match cmd_done(&s.client, s.user_id).await {
+                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                })),
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
             _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
         }
     } else if cmd == &"status" {

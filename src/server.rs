@@ -66,6 +66,10 @@ async fn submit_sks(
 
     if ss.check_cipher_submission() {
         ss.transit(ServerState::ReadyForInputs);
+        let server_key_shares = ss.get_sks()?;
+        set_parameter_set(PARAMETER);
+        // Long running, global variable change
+        derive_server_key(&server_key_shares);
     }
 
     Ok(Json(user_id))
@@ -80,6 +84,7 @@ async fn request_action(
     let mut ss = ss.lock().await;
 
     ss.ensure(ServerState::ReadyForInputs)?;
+
     let user = ss.get_user(user_id)?;
     println!("{} performed {}", user.name, action.to_string());
     let action = action.unpack(user_id);
@@ -110,6 +115,7 @@ async fn request_action(
         | UserAction::LayEgg { .. }
         | UserAction::PickupEgg { .. }
         | UserAction::GetCell { .. } => ss.action_queue.push((user_id, action)),
+        UserAction::Done => ss.transit(ServerState::ReadyForRunning),
     };
 
     Ok(Json(user_id))
@@ -123,7 +129,6 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
 
     match &ss.state {
         ServerState::ReadyForRunning => {
-            let server_key_shares = ss.get_sks()?;
             let game_state = ss.game_state.clone().ok_or(Error::GameNotInitedYet)?;
             let uas = ss.action_queue.clone();
 
@@ -139,9 +144,6 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                         |pool| {
                             pool.install(|| {
                                 println!("Begin FHE run");
-                                // Long running, global variable change
-                                derive_server_key(&server_key_shares);
-
                                 // Long running
                                 let final_game_state = evaluate_circuit(game_state, &uas);
                                 let cells = get_cells(&final_game_state, 4);
