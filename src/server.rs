@@ -94,20 +94,22 @@ async fn request_action(
                 Some(game_state) => game_state.eggs = initial_eggs,
                 None => {
                     ss.game_state = Some(GameStateEnc {
-                        coords: vec![],
+                        coords: vec![None; 4],
                         eggs: initial_eggs,
                     })
                 }
             };
         }
-        UserAction::SetStartingCoords { starting_coords } => {
+        UserAction::SetStartingCoord { starting_coord } => {
             match &mut ss.game_state {
-                Some(game_state) => game_state.coords = starting_coords,
+                Some(game_state) => game_state.coords[user_id] = Some(starting_coord),
                 None => {
+                    let mut coords = vec![None; 4];
+                    coords[user_id] = Some(starting_coord);
                     ss.game_state = Some(GameStateEnc {
-                        coords: starting_coords,
+                        coords,
                         eggs: vec![],
-                    })
+                    });
                 }
             };
         }

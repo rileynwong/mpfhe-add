@@ -164,9 +164,9 @@ impl WebClient {
         &self,
         ck: &ClientKey,
         user_id: UserId,
-        starting_coords: &[(u8, u8)],
+        starting_coords: &(u8, u8),
     ) -> Result<UserId, Error> {
-        let action = UserAction::set_starting_coords(ck, starting_coords);
+        let action = UserAction::set_starting_coord(ck, starting_coords);
         self.request_action(user_id, &action).await
     }
 
