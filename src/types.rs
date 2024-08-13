@@ -118,6 +118,7 @@ impl GameStateLocalView {
     }
 
     pub fn print(&self) {
+        println!("My coordination {:?}", self.my_coord);
         let mut data = vec![];
         for _ in 0..BOARD_DIM {
             let cells = (0..BOARD_DIM).map(|_| "_".to_string()).collect_vec();
@@ -142,6 +143,7 @@ impl GameStateLocalView {
     }
 
     pub fn print_with_output(&self, output: &[bool]) {
+        println!("My coordination {:?}", self.my_coord);
         let mut data = vec![];
         for _ in 0..BOARD_DIM {
             let cells = (0..BOARD_DIM).map(|_| "🌫️".to_string()).collect_vec();
@@ -150,7 +152,6 @@ impl GameStateLocalView {
         let (my_x, my_y) = self.my_coord;
         let y = BOARD_DIM - 1 - my_y as usize;
         let x = my_x as usize;
-        data[y][x] = format!("(🐓{})", self.user_id).to_string();
         for user in 0..4 {
             if output[user] == true {
                 data[y][x] = [data[y][x].to_string(), format!("(🐓{})", user).to_string()].concat()
