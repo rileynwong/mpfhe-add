@@ -113,6 +113,7 @@ struct StateDownloadedOuput {
     name: String,
     client: WebClient,
     ck: ClientKey,
+    user_id: UserId,
     names: Vec<String>,
     fhe_out: CircuitOutput,
     shares: DecryptionSharesMap,
@@ -215,7 +216,7 @@ async fn cmd_setup_game(
         .ok_or_else(|| anyhow!("please add init y"))?
         .parse::<u8>()?;
 
-    let view = GameStateLocalView::new(x, y);
+    let view = GameStateLocalView::new(x, y, user_id);
     client.set_starting_coords(ck, user_id, &(x, y)).await?;
     view.print();
     Ok(view)
@@ -329,6 +330,8 @@ async fn cmd_download_shares(
     ck: &ClientKey,
     shares: &mut HashMap<(usize, usize), Vec<u64>>,
     co: &CircuitOutput,
+    user_id: UserId,
+    view: &GameStateLocalView,
 ) -> Result<Vec<Vec<bool>>, Error> {
     let total_users = names.len();
     println!("Acquiring decryption shares needed");
@@ -353,6 +356,7 @@ async fn cmd_download_shares(
         .collect_vec();
     let decrypted_output = co.decrypt(ck, &dss);
     println!("Final decrypted output: {:?}", decrypted_output);
+    view.print_with_output(&decrypted_output[user_id]);
     Ok(decrypted_output)
 }
 
@@ -398,7 +402,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         ck: s.ck,
                         user_id: s.user_id,
                         names: s.names,
-                        view: GameStateLocalView::new(0, 0),
+                        view: GameStateLocalView::new(0, 0, 0),
                     })),
                     Err(err) => Err((err, State::ConcludedRegistration(s))),
                 }
@@ -420,6 +424,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     name: s.name,
                     client: s.client,
                     ck: s.ck,
+                    user_id: s.user_id,
                     names: s.names,
                     fhe_out,
                     shares,
@@ -428,8 +433,16 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 Err(err) => Err((err, State::TriggeredRun(s))),
             },
             State::DownloadedOutput(mut s) => {
-                match cmd_download_shares(&s.client, &s.names, &s.ck, &mut s.shares, &s.fhe_out)
-                    .await
+                match cmd_download_shares(
+                    &s.client,
+                    &s.names,
+                    &s.ck,
+                    &mut s.shares,
+                    &s.fhe_out,
+                    s.user_id,
+                    &s.view,
+                )
+                .await
                 {
                     Ok(decrypted_output) => Ok(State::Decrypted(StateDecrypted {
                         names: s.names,

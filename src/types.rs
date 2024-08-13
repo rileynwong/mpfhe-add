@@ -82,13 +82,15 @@ fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
 
 #[derive(Debug, Clone)]
 pub struct GameStateLocalView {
+    user_id: UserId,
     my_coord: (u8, u8),
     eggs_laid: Vec<bool>,
 }
 
 impl GameStateLocalView {
-    pub fn new(x: u8, y: u8) -> Self {
+    pub fn new(x: u8, y: u8, user_id: UserId) -> Self {
         Self {
+            user_id,
             my_coord: (x, y),
             eggs_laid: vec![false; BOARD_SIZE],
         }
@@ -123,7 +125,8 @@ impl GameStateLocalView {
         }
 
         let (my_x, my_y) = self.my_coord;
-        data[BOARD_DIM - 1 - my_y as usize][my_x as usize] = "🐓".to_string();
+        data[BOARD_DIM - 1 - my_y as usize][my_x as usize] =
+            format!("(🐓{})", self.user_id).to_string();
         for x in 0..BOARD_DIM {
             for y in 0..BOARD_DIM {
                 if self.eggs_laid[BOARD_DIM * (BOARD_DIM - 1 - (y as usize)) + (x as usize)] == true
@@ -135,6 +138,28 @@ impl GameStateLocalView {
                 }
             }
         }
+        println!("{}", Table::from_iter(data).to_string());
+    }
+
+    pub fn print_with_output(&self, output: &[bool]) {
+        let mut data = vec![];
+        for _ in 0..BOARD_DIM {
+            let cells = (0..BOARD_DIM).map(|_| "🌫️".to_string()).collect_vec();
+            data.push(cells)
+        }
+        let (my_x, my_y) = self.my_coord;
+        let y = BOARD_DIM - 1 - my_y as usize;
+        let x = my_x as usize;
+        data[y][x] = format!("(🐓{})", self.user_id).to_string();
+        for user in 0..4 {
+            if output[user] == true {
+                data[y][x] = [data[y][x].to_string(), format!("(🐓{})", user).to_string()].concat()
+            }
+        }
+        if output[4] == true {
+            data[y][x] = [data[y][x].to_string(), "🥚".to_string()].concat()
+        }
+
         println!("{}", Table::from_iter(data).to_string());
     }
 }
