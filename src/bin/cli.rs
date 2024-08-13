@@ -21,8 +21,8 @@ struct Cli2 {
 enum State {
     Init(StateInit),
     Setup(StateSetup),
+    ConcludedRegistration(Registration),
     SubmittedSks(SubmittedSks),
-    SubmittedInput(SubmittedInput),
     TriggeredRun(StateTriggeredRun),
     DownloadedOutput(StateDownloadedOuput),
     Decrypted(StateDecrypted),
@@ -33,8 +33,8 @@ impl Display for State {
         let label = match self {
             State::Init(_) => "Initialization",
             State::Setup(_) => "Setup",
+            State::ConcludedRegistration(_) => "ConcludedRegistration",
             State::SubmittedSks(_) => "SubmittedSks",
-            State::SubmittedInput(_) => "Encrypted Input",
             State::TriggeredRun(_) => "Triggered Run",
             State::DownloadedOutput(_) => "Downloaded Output",
             State::Decrypted(_) => "Decrypted",
@@ -50,8 +50,8 @@ impl State {
                 format!("Hi {}, we just connected to server {}.", name, client.url())
             }
             State::Setup(StateSetup { .. }) => "✅ Setup completed!".to_string(),
-            State::SubmittedSks(_) => "Sks sent".to_string(),
-            State::SubmittedInput(_) => "✅ Ciphertext submitted!".to_string(),
+            State::ConcludedRegistration(_) => "Sks sent".to_string(),
+            State::SubmittedSks(_) => "✅ Ciphertext submitted!".to_string(),
             State::TriggeredRun(_) => "✅ FHE run triggered!".to_string(),
             State::DownloadedOutput(_) => "✅ FHE output downloaded!".to_string(),
             State::Decrypted(_) => "✅ FHE output decrypted!".to_string(),
@@ -81,7 +81,7 @@ struct StateSetup {
     user_id: UserId,
 }
 
-struct SubmittedSks {
+struct Registration {
     name: String,
     client: WebClient,
     ck: ClientKey,
@@ -89,7 +89,7 @@ struct SubmittedSks {
     names: Vec<String>,
 }
 
-struct SubmittedInput {
+struct SubmittedSks {
     name: String,
     client: WebClient,
     ck: ClientKey,
@@ -118,7 +118,7 @@ struct StateDownloadedOuput {
 struct StateDecrypted {
     names: Vec<String>,
     client: WebClient,
-    decrypted_output: Vec<Score>,
+    decrypted_output: Vec<Vec<bool>>,
 }
 
 #[tokio::main]
@@ -209,7 +209,10 @@ async fn cmd_move(
     ck: &ClientKey,
     user_id: UserId,
 ) -> Result<(), Error> {
-    let direction = match args[0] {
+    let arg = args
+        .get(0)
+        .ok_or_else(|| anyhow!("please add direction to move"))?;
+    let direction = match *arg {
         "up" => Direction::Up,
         "down" => Direction::Down,
         "left" => Direction::Left,
@@ -285,7 +288,7 @@ async fn cmd_download_shares(
     ck: &ClientKey,
     shares: &mut HashMap<(usize, usize), Vec<u64>>,
     co: &CircuitOutput,
-) -> Result<Vec<Score>, Error> {
+) -> Result<Vec<Vec<bool>>, Error> {
     let total_users = names.len();
     println!("Acquiring decryption shares needed");
     for (output_id, user_id) in (0..co.n()).cartesian_product(0..total_users) {
@@ -333,7 +336,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             State::Setup(s) => match cmd_get_names(&s.client).await {
                 Ok((is_concluded, names)) => {
                     if is_concluded {
-                        Ok(State::SubmittedSks(SubmittedSks {
+                        Ok(State::ConcludedRegistration(Registration {
                             name: s.name,
                             client: s.client,
                             ck: s.ck,
@@ -346,19 +349,19 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 }
                 Err(err) => Err((err, State::Setup(s))),
             },
-            State::SubmittedSks(s) => {
+            State::ConcludedRegistration(s) => {
                 match cmd_submit_sks(args, &s.client, &s.user_id, &s.names, &s.ck).await {
-                    Ok(()) => Ok(State::SubmittedInput(SubmittedInput {
+                    Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
                         name: s.name,
                         client: s.client,
                         ck: s.ck,
                         user_id: s.user_id,
                         names: s.names,
                     })),
-                    Err(err) => Err((err, State::SubmittedSks(s))),
+                    Err(err) => Err((err, State::ConcludedRegistration(s))),
                 }
             }
-            State::SubmittedInput(s) => match cmd_run(&s.client).await {
+            State::SubmittedSks(s) => match cmd_run(&s.client).await {
                 Ok(()) => Ok(State::TriggeredRun(StateTriggeredRun {
                     name: s.name,
                     client: s.client,
@@ -366,7 +369,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     user_id: s.user_id,
                     names: s.names,
                 })),
-                Err(err) => Err((err, State::SubmittedInput(s))),
+                Err(err) => Err((err, State::SubmittedSks(s))),
             },
             State::TriggeredRun(s) => match cmd_download_output(&s.client, &s.user_id, &s.ck).await
             {
@@ -474,7 +477,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
         }
     } else if cmd == &"done" {
         match state {
-            State::SubmittedSks(s) => Ok(State::SubmittedInput(SubmittedInput {
+            State::SubmittedSks(s) => Ok(State::SubmittedSks(SubmittedSks {
                 name: s.name,
                 client: s.client,
                 ck: s.ck,
@@ -487,8 +490,8 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
         match &state {
             State::Init(StateInit { client, .. })
             | State::Setup(StateSetup { client, .. })
+            | State::ConcludedRegistration(Registration { client, .. })
             | State::SubmittedSks(SubmittedSks { client, .. })
-            | State::SubmittedInput(SubmittedInput { client, .. })
             | State::TriggeredRun(StateTriggeredRun { client, .. })
             | State::DownloadedOutput(StateDownloadedOuput { client, .. })
             | State::Decrypted(StateDecrypted { client, .. }) => {

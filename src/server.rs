@@ -65,7 +65,7 @@ async fn submit_sks(
     user.storage = UserStorage::Sks(Box::new(sks));
 
     if ss.check_cipher_submission() {
-        ss.transit(ServerState::ReadyForRunning);
+        ss.transit(ServerState::ReadyForInputs);
     }
 
     Ok(Json(user_id))
