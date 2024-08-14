@@ -152,6 +152,7 @@ impl GameStateLocalView {
         let (my_x, my_y) = self.my_coord;
         let y = BOARD_DIM - 1 - my_y as usize;
         let x = my_x as usize;
+        data[y][x] = "".to_string();
         for user in 0..4 {
             if output[user] == true {
                 data[y][x] = [data[y][x].to_string(), format!("(🐓{})", user).to_string()].concat()
