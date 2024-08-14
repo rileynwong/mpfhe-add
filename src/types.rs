@@ -1,11 +1,14 @@
+use crate::circuit::PARAMETER;
 use crate::dashboard::{Dashboard, RegisteredUser};
 use itertools::Itertools;
+use phantom_zone::set_parameter_set;
 use phantom_zone::{
     evaluator::NonInteractiveMultiPartyCrs,
     keys::CommonReferenceSeededNonInteractiveMultiPartyServerKeyShare, parameters::BoolParameters,
     Encryptor, FheBool, KeySwitchWithId, MultiPartyDecryptor, NonInteractiveSeededFheBools,
     SampleExtractor,
 };
+use rayon::vec;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio::sync::Mutex;
 use rocket::Responder;
@@ -13,6 +16,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::sync::Arc;
+use tabled::Table;
 use thiserror::Error;
 
 pub type Score = i16;
@@ -76,6 +80,92 @@ fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
     result
 }
 
+#[derive(Debug, Clone)]
+pub struct GameStateLocalView {
+    user_id: UserId,
+    my_coord: (u8, u8),
+    eggs_laid: Vec<bool>,
+}
+
+impl GameStateLocalView {
+    pub fn new(x: u8, y: u8, user_id: UserId) -> Self {
+        Self {
+            user_id,
+            my_coord: (x, y),
+            eggs_laid: vec![false; BOARD_SIZE],
+        }
+    }
+    pub fn move_player(&mut self, dir: Direction) {
+        let (x, y) = &mut self.my_coord;
+        match dir {
+            Direction::Up => *y = y.wrapping_add(1),
+            Direction::Down => *y = y.wrapping_sub(1),
+            Direction::Left => *x = x.wrapping_sub(1),
+            Direction::Right => *x = x.wrapping_add(1),
+        }
+    }
+    pub fn get_egg(&mut self) -> &mut bool {
+        let (x, y) = self.my_coord;
+        &mut self.eggs_laid[BOARD_DIM * (BOARD_DIM - 1 - (y as usize)) + (x as usize)]
+    }
+
+    pub fn lay(&mut self) {
+        *self.get_egg() = true;
+    }
+
+    pub fn pickup(&mut self) {
+        *self.get_egg() = false;
+    }
+
+    pub fn print(&self) {
+        println!("My coordination {:?}", self.my_coord);
+        let mut data = vec![];
+        for _ in 0..BOARD_DIM {
+            let cells = (0..BOARD_DIM).map(|_| "_".to_string()).collect_vec();
+            data.push(cells)
+        }
+
+        let (my_x, my_y) = self.my_coord;
+        data[BOARD_DIM - 1 - my_y as usize][my_x as usize] =
+            format!("(🐓{})", self.user_id).to_string();
+        for x in 0..BOARD_DIM {
+            for y in 0..BOARD_DIM {
+                if self.eggs_laid[BOARD_DIM * (BOARD_DIM - 1 - (y as usize)) + (x as usize)] == true
+                {
+                    data[BOARD_DIM - 1 - y][x] =
+                        [data[BOARD_DIM - 1 - y][x].to_string(), "🥚".to_string()]
+                            .join("")
+                            .to_string();
+                }
+            }
+        }
+        println!("{}", Table::from_iter(data).to_string());
+    }
+
+    pub fn print_with_output(&self, output: &[bool]) {
+        println!("My coordination {:?}", self.my_coord);
+        let mut data = vec![];
+        for _ in 0..BOARD_DIM {
+            let cells = (0..BOARD_DIM).map(|_| "🌫️".to_string()).collect_vec();
+            data.push(cells)
+        }
+        let (my_x, my_y) = self.my_coord;
+        let y = BOARD_DIM - 1 - my_y as usize;
+        let x = my_x as usize;
+        data[y][x] = "".to_string();
+        for user in 0..4 {
+            if output[user] == true {
+                data[y][x] = [data[y][x].to_string(), format!("(🐓{})", user).to_string()].concat()
+            }
+        }
+        if output[4] == true {
+            data[y][x] = [data[y][x].to_string(), "🥚".to_string()].concat()
+        }
+
+        println!("{}", Table::from_iter(data).to_string());
+    }
+}
+
 pub struct GameState {
     /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
     coords: Vec<PlainCoord>,
@@ -85,7 +175,7 @@ pub struct GameState {
 
 #[derive(Debug, Clone)]
 pub struct GameStateEnc {
-    pub coords: Vec<Word>,
+    pub coords: Vec<Option<Word>>,
     pub eggs: Word,
 }
 
@@ -134,22 +224,24 @@ impl PlainCoord {
 #[serde(crate = "rocket::serde")]
 pub enum UserAction<T> {
     InitGame { initial_eggs: T },
-    SetStartingCoords { starting_coords: Vec<T> },
+    SetStartingCoord { starting_coord: T },
     MovePlayer { direction: T },
     LayEgg,
     PickupEgg,
     GetCell,
+    Done,
 }
 
 impl<T> Display for UserAction<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
             UserAction::InitGame { .. } => "InitGame",
-            UserAction::SetStartingCoords { .. } => "SetStartingCoords",
+            UserAction::SetStartingCoord { .. } => "SetStartingCoord",
             UserAction::MovePlayer { .. } => "MovePlayer",
             UserAction::LayEgg { .. } => "LayEgg",
             UserAction::PickupEgg { .. } => "PickupEgg",
             UserAction::GetCell { .. } => "GetCell",
+            UserAction::Done => "Done",
         };
         write!(f, "{}", text)
     }
@@ -164,13 +256,11 @@ impl UserAction<EncryptedWord> {
         Self::InitGame { initial_eggs }
     }
 
-    pub fn set_starting_coords(ck: &ClientKey, coords: &[(u8, u8)]) -> Self {
-        let starting_coords = coords
-            .iter()
-            .map(|(x, y)| ck.encrypt(coords_to_binary::<16>(*x, *y).as_slice()))
-            .collect_vec();
+    pub fn set_starting_coord(ck: &ClientKey, coords: &(u8, u8)) -> Self {
+        let (x, y) = coords;
+        let starting_coord = ck.encrypt(coords_to_binary::<16>(*x, *y).as_slice());
 
-        Self::SetStartingCoords { starting_coords }
+        Self::SetStartingCoord { starting_coord }
     }
 
     pub fn move_player(ck: &ClientKey, direction: Direction) -> Self {
@@ -181,15 +271,13 @@ impl UserAction<EncryptedWord> {
     }
 
     pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
+        set_parameter_set(PARAMETER);
         match &self {
             UserAction::InitGame { initial_eggs } => UserAction::InitGame {
                 initial_eggs: unpack_word(initial_eggs, user_id),
             },
-            UserAction::SetStartingCoords { starting_coords } => UserAction::SetStartingCoords {
-                starting_coords: starting_coords
-                    .iter()
-                    .map(|word| unpack_word(word, user_id))
-                    .collect_vec(),
+            UserAction::SetStartingCoord { starting_coord } => UserAction::SetStartingCoord {
+                starting_coord: unpack_word(starting_coord, user_id),
             },
             UserAction::MovePlayer { direction } => UserAction::MovePlayer {
                 direction: unpack_word(direction, user_id),
@@ -197,6 +285,7 @@ impl UserAction<EncryptedWord> {
             UserAction::LayEgg => UserAction::LayEgg,
             UserAction::PickupEgg => UserAction::PickupEgg,
             UserAction::GetCell => UserAction::GetCell,
+            UserAction::Done => UserAction::Done,
         }
     }
 }
@@ -387,7 +476,8 @@ impl ServerStorage {
     }
 
     pub(crate) fn transit(&mut self, state: ServerState) {
-        self.state.transit(state)
+        self.state.transit(state.clone());
+        println!("Sever state {}", state);
     }
 
     pub(crate) fn get_user(&mut self, user_id: UserId) -> Result<&mut UserRecord, Error> {

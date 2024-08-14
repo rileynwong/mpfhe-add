@@ -164,9 +164,9 @@ impl WebClient {
         &self,
         ck: &ClientKey,
         user_id: UserId,
-        starting_coords: &[(u8, u8)],
+        starting_coords: &(u8, u8),
     ) -> Result<UserId, Error> {
-        let action = UserAction::set_starting_coords(ck, starting_coords);
+        let action = UserAction::set_starting_coord(ck, starting_coords);
         self.request_action(user_id, &action).await
     }
 
@@ -189,6 +189,10 @@ impl WebClient {
 
     pub async fn pickup_egg(&self, user_id: UserId) -> Result<UserId, Error> {
         self.request_action(user_id, &UserAction::PickupEgg).await
+    }
+
+    pub async fn done(&self, user_id: UserId) -> Result<UserId, Error> {
+        self.request_action(user_id, &UserAction::Done).await
     }
 
     /// After the actions submitted from all users,
@@ -230,7 +234,7 @@ impl WebClient {
         &self,
         output_id: usize,
         user_id: usize,
-    ) -> Result<DecryptionShare, Error> {
+    ) -> Result<AnnotatedDecryptionShare, Error> {
         self.get(&format!("/decryption_share/{output_id}/{user_id}"))
             .await
     }
