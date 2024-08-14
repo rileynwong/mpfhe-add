@@ -1,10 +1,10 @@
 use anyhow::{anyhow, bail, Error};
-use clap::{command, Parser};
-use itertools::Itertools;
-use karma_calculator::{
+use chickens::{
     setup, AnnotatedDecryptionShare, CircuitOutput, DecryptionSharesMap, Direction,
     GameStateLocalView, ServerState, UserId, WebClient, BOARD_SIZE,
 };
+use clap::{command, Parser};
+use itertools::Itertools;
 use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
 use rustyline::{error::ReadlineError, DefaultEditor};
 use std::{collections::HashMap, fmt::Display};

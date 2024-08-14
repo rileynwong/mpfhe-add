@@ -247,7 +247,6 @@ fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitOutput {
-    /// Computed karma balance of all users
     cells: Vec<Word>,
 }
 

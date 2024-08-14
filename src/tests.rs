@@ -110,9 +110,9 @@ impl User {
         let my_id = self.id.expect("exists");
         (0..total_users)
             .filter_map(|output_id| {
-                // if output_id == my_id {
-                //     return None;
-                // };
+                if output_id == my_id {
+                    return None;
+                };
 
                 let share = self
                     .decryption_shares

@@ -238,6 +238,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
+name = "chickens"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "clap",
+ "futures",
+ "hex",
+ "indicatif",
+ "itertools 0.13.0",
+ "phantom-zone",
+ "rand",
+ "rayon",
+ "reqwest",
+ "rocket",
+ "rustyline",
+ "serde",
+ "serde_json",
+ "tabled",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "toml",
+]
+
+[[package]]
 name = "clap"
 version = "4.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -979,32 +1005,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29c15563dc2726973df627357ce0c9ddddbea194836909d655df6a75d2cf296d"
 dependencies = [
  "wasm-bindgen",
-]
-
-[[package]]
-name = "karma_calculator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bincode",
- "clap",
- "futures",
- "hex",
- "indicatif",
- "itertools 0.13.0",
- "phantom-zone",
- "rand",
- "rayon",
- "reqwest",
- "rocket",
- "rustyline",
- "serde",
- "serde_json",
- "tabled",
- "thiserror",
- "tokio",
- "tokio-util",
- "toml",
 ]
 
 [[package]]
