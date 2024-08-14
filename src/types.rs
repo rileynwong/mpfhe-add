@@ -92,10 +92,10 @@ impl GameStateLocalView {
     pub fn move_player(&mut self, dir: Direction) {
         let (x, y) = &mut self.my_coord;
         match dir {
-            Direction::Up => *y = y.wrapping_add(1),
-            Direction::Down => *y = y.wrapping_sub(1),
-            Direction::Left => *x = x.wrapping_sub(1),
-            Direction::Right => *x = x.wrapping_add(1),
+            Direction::Up => *x = (*x - 1 + BOARD_DIM as u8) % BOARD_DIM as u8,
+            Direction::Down => *x = (*x + 1) % BOARD_DIM as u8,
+            Direction::Left => *y = (*y - 1 + BOARD_DIM as u8) % BOARD_DIM as u8,
+            Direction::Right => *y = (*y + 1) % BOARD_DIM as u8,
         }
     }
     pub fn get_egg(&mut self) -> &mut bool {
