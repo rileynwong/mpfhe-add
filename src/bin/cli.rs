@@ -1,15 +1,13 @@
-use anyhow::{anyhow, bail, ensure, Error};
+use anyhow::{anyhow, bail, Error};
 use clap::{command, Parser};
 use itertools::Itertools;
 use karma_calculator::{
-    gen_decryption_shares, setup, AnnotatedDecryptionShare, CircuitOutput, DecryptionShare,
-    DecryptionSharesMap, Direction, GameStateLocalView, Score, ServerState, UserAction, UserId,
-    WebClient, Word, BOARD_SIZE,
+    setup, AnnotatedDecryptionShare, CircuitOutput, DecryptionSharesMap, Direction,
+    GameStateLocalView, ServerState, UserId, WebClient, BOARD_SIZE,
 };
 use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
 use rustyline::{error::ReadlineError, DefaultEditor};
-use std::{collections::HashMap, fmt::Display, iter::zip};
-use tabled::{settings::Style, Table, Tabled};
+use std::{collections::HashMap, fmt::Display};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -581,21 +579,4 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
     } else {
         Err((anyhow!("Unknown command {}", cmd), state))
     }
-}
-
-fn present_balance(names: &[String], scores: &[Score], final_balances: &[Score]) {
-    #[derive(Tabled)]
-    struct Row {
-        name: String,
-        karma_i_sent: Score,
-        decrypted_karma_balance: Score,
-    }
-    let table = zip(zip(names, scores), final_balances)
-        .map(|((name, &karma_i_sent), &decrypted_karma_balance)| Row {
-            name: name.to_string(),
-            karma_i_sent,
-            decrypted_karma_balance,
-        })
-        .collect_vec();
-    println!("{}", Table::new(table).with(Style::ascii_rounded()));
 }

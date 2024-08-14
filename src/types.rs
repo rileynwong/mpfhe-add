@@ -1,14 +1,12 @@
 use crate::circuit::PARAMETER;
 use crate::dashboard::{Dashboard, RegisteredUser};
 use itertools::Itertools;
-use phantom_zone::set_parameter_set;
 use phantom_zone::{
     evaluator::NonInteractiveMultiPartyCrs,
     keys::CommonReferenceSeededNonInteractiveMultiPartyServerKeyShare, parameters::BoolParameters,
-    Encryptor, FheBool, KeySwitchWithId, MultiPartyDecryptor, NonInteractiveSeededFheBools,
-    SampleExtractor,
+    set_parameter_set, Encryptor, FheBool, KeySwitchWithId, MultiPartyDecryptor,
+    NonInteractiveSeededFheBools, SampleExtractor,
 };
-use rayon::vec;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio::sync::Mutex;
 use rocket::Responder;
@@ -19,10 +17,6 @@ use std::sync::Arc;
 use tabled::Table;
 use thiserror::Error;
 
-pub type Score = i16;
-/// It is here for the build
-type PlainWord = i16;
-
 pub type ClientKey = phantom_zone::ClientKey;
 pub type UserId = usize;
 
@@ -32,17 +26,17 @@ pub(crate) type ServerKeyShare = CommonReferenceSeededNonInteractiveMultiPartySe
     BoolParameters<u64>,
     NonInteractiveMultiPartyCrs<Seed>,
 >;
+
 pub type Word = Vec<FheBool>;
-pub(crate) type CircuitInput = Vec<Word>;
+pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
+
 /// Decryption share for a word from one user.
 pub type DecryptionShare = Vec<u64>;
 
 /// Decryption share with output id
 pub type AnnotatedDecryptionShare = (usize, DecryptionShare);
 
-pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
-
-pub const BOARD_DIM: usize = 4; // board size is BOARD_DIM * BOARD_DIM
+pub const BOARD_DIM: usize = 4;
 pub const BOARD_SIZE: usize = BOARD_DIM * BOARD_DIM;
 
 #[derive(Copy, Clone)]
@@ -248,9 +242,6 @@ impl<T> Display for UserAction<T> {
 }
 
 impl UserAction<EncryptedWord> {
-    pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
-        todo!();
-    }
     pub fn init_game(ck: &ClientKey, initial_eggs: &[bool]) -> Self {
         let initial_eggs = ck.encrypt(initial_eggs);
         Self::InitGame { initial_eggs }

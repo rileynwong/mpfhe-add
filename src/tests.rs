@@ -110,9 +110,9 @@ impl User {
         let my_id = self.id.expect("exists");
         (0..total_users)
             .filter_map(|output_id| {
-                if output_id == my_id {
-                    return None;
-                };
+                // if output_id == my_id {
+                //     return None;
+                // };
 
                 let share = self
                     .decryption_shares
@@ -213,7 +213,7 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
     // User 0 encrypt initial eggs
     let initial_eggs = [false; BOARD_SIZE];
     let ck = users[0].ck.as_ref().unwrap();
-    client.init_game(ck, 0, &initial_eggs);
+    client.init_game(ck, 0, &initial_eggs).await.unwrap();
 
     println!("users call set starting coords");
 
@@ -226,7 +226,7 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
     for (i, user) in users.iter_mut().enumerate() {
         let ck = user.ck.as_ref().unwrap();
         client
-            .set_starting_coords(ck, i, &[user.starting_coords.unwrap()])
+            .set_starting_coords(ck, i, &user.starting_coords.unwrap())
             .await
             .unwrap();
     }
@@ -245,6 +245,8 @@ async fn run_flow_with_n_users(total_users: usize) -> Result<(), Error> {
             client.pickup_egg(i).await.unwrap();
         }
     }
+
+    client.done(0).await.unwrap();
 
     println!("any user calls trigger the run");
 
