@@ -78,17 +78,19 @@ fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
 pub struct GameStateLocalView {
     user_id: UserId,
     my_coord: (u8, u8),
-    eggs_laid: Vec<bool>,
+    eggs_laid: Vec<Vec<bool>>,
 }
 
 impl GameStateLocalView {
+    // x is the row index, y is the column index
     pub fn new(x: u8, y: u8, user_id: UserId) -> Self {
         Self {
             user_id,
             my_coord: (x, y),
-            eggs_laid: vec![false; BOARD_SIZE],
+            eggs_laid: vec![vec![false; BOARD_DIM]; BOARD_DIM],
         }
     }
+
     pub fn move_player(&mut self, dir: Direction) {
         let (x, y) = &mut self.my_coord;
         match dir {
@@ -100,7 +102,7 @@ impl GameStateLocalView {
     }
     pub fn get_egg(&mut self) -> &mut bool {
         let (x, y) = self.my_coord;
-        &mut self.eggs_laid[BOARD_DIM * (BOARD_DIM - 1 - (y as usize)) + (x as usize)]
+        &mut self.eggs_laid[x as usize][y as usize]
     }
 
     pub fn lay(&mut self) {
@@ -111,8 +113,11 @@ impl GameStateLocalView {
         *self.get_egg() = false;
     }
 
+    // for row, 0 index starts from the top
+    // for column, 0 index starts from the left
     pub fn print(&self) {
         println!("My coordination {:?}", self.my_coord);
+
         let mut data = vec![];
         for _ in 0..BOARD_DIM {
             let cells = (0..BOARD_DIM).map(|_| "_".to_string()).collect_vec();
@@ -120,16 +125,14 @@ impl GameStateLocalView {
         }
 
         let (my_x, my_y) = self.my_coord;
-        data[BOARD_DIM - 1 - my_y as usize][my_x as usize] =
-            format!("(🐓{})", self.user_id).to_string();
+        data[my_x as usize][my_y as usize] = format!("(🐓{})", self.user_id).to_string();
+
         for x in 0..BOARD_DIM {
             for y in 0..BOARD_DIM {
-                if self.eggs_laid[BOARD_DIM * (BOARD_DIM - 1 - (y as usize)) + (x as usize)] == true
-                {
-                    data[BOARD_DIM - 1 - y][x] =
-                        [data[BOARD_DIM - 1 - y][x].to_string(), "🥚".to_string()]
-                            .join("")
-                            .to_string();
+                if self.eggs_laid[x][y] {
+                    data[x][y] = [data[x][y].to_string(), "🥚".to_string()]
+                        .join("")
+                        .to_string();
                 }
             }
         }
@@ -138,79 +141,34 @@ impl GameStateLocalView {
 
     pub fn print_with_output(&self, output: &[bool]) {
         println!("My coordination {:?}", self.my_coord);
+
         let mut data = vec![];
         for _ in 0..BOARD_DIM {
             let cells = (0..BOARD_DIM).map(|_| "🌫️".to_string()).collect_vec();
             data.push(cells)
         }
+
         let (my_x, my_y) = self.my_coord;
-        let y = BOARD_DIM - 1 - my_y as usize;
-        let x = my_x as usize;
-        data[y][x] = "".to_string();
+        let (x, y) = (my_x as usize, my_y as usize);
+        data[x][y] = "".to_string();
+
         for user in 0..4 {
-            if output[user] == true {
-                data[y][x] = [data[y][x].to_string(), format!("(🐓{})", user).to_string()].concat()
+            if output[user] {
+                data[x][y] = [data[x][y].to_string(), format!("(🐓{})", user).to_string()].concat()
             }
         }
-        if output[4] == true {
-            data[y][x] = [data[y][x].to_string(), "🥚".to_string()].concat()
+        if output[4] {
+            data[x][y] = [data[x][y].to_string(), "🥚".to_string()].concat()
         }
 
         println!("{}", Table::from_iter(data).to_string());
     }
 }
 
-pub struct GameState {
-    /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
-    coords: Vec<PlainCoord>,
-    /// example: [false; BOARD_SIZE];
-    eggs: Vec<bool>,
-}
-
 #[derive(Debug, Clone)]
 pub struct GameStateEnc {
     pub coords: Vec<Option<Word>>,
     pub eggs: Word,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-pub struct PlainCoord {
-    pub x: u8,
-    pub y: u8,
-}
-
-impl PlainCoord {
-    pub fn new(x: u8, y: u8) -> PlainCoord {
-        PlainCoord { x: x, y: y }
-    }
-
-    pub fn from_binnary<const N: usize>(coords: &[bool]) -> PlainCoord {
-        let mut x = 0u8;
-        let mut y = 0u8;
-        for i in (0..N / 2).rev() {
-            x = (x << 1) + coords[i] as u8;
-        }
-        for i in (N / 2..N).rev() {
-            y = (y << 1) + coords[i] as u8;
-        }
-        return PlainCoord { x: x, y: y };
-    }
-
-    pub fn to_binary<const N: usize>(&self) -> [bool; N] {
-        let mut result = [false; N];
-        for i in 0..N / 2 {
-            if (self.x >> i) & 1 == 1 {
-                result[i] = true;
-            }
-        }
-        for i in N / 2..N {
-            if (self.y >> i) & 1 == 1 {
-                result[i] = true;
-            }
-        }
-        result
-    }
 }
 
 /// Encrypted input words contributed from one user
@@ -279,10 +237,6 @@ impl UserAction<EncryptedWord> {
             UserAction::Done => UserAction::Done,
         }
     }
-}
-
-pub fn encrypt_plain(ck: &ClientKey, plain: &[bool]) -> EncryptedWord {
-    ck.encrypt(plain)
 }
 
 fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
