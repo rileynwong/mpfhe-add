@@ -2,11 +2,10 @@ use crate::circuit::{derive_server_key, evaluate_circuit, get_cells, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
 
 use crate::types::{
-    CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Error, ErrorResponse,
-    GameStateEnc, MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId,
-    UserStorage,
+    CircuitOutput, DecryptionShareSubmission, EncryptedWord, Error, ErrorResponse, GameStateEnc,
+    MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId, UserStorage,
 };
-use crate::{AnnotatedDecryptionShare, UserAction, Word};
+use crate::{AnnotatedDecryptionShare, UserAction};
 use phantom_zone::{set_common_reference_seed, set_parameter_set};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
@@ -34,8 +33,7 @@ async fn register(
     println!("{name} just joined!");
 
     if ss.users.len() == 4 {
-        ss.ensure(ServerState::ReadyForJoining)?;
-        ss.transit(ServerState::ReadyForInputs);
+        ss.transit(ServerState::ReadyForServerKeyShares);
         println!("Got 4 players. Registration closed!");
     }
 
@@ -48,7 +46,7 @@ async fn get_dashboard(ss: &State<MutexServerStorage>) -> Json<Dashboard> {
     Json(dashboard)
 }
 
-/// The user submits Server key shares
+/// The user submits server key shares
 #[post("/submit_sks", data = "<submission>", format = "msgpack")]
 async fn submit_sks(
     submission: MsgPack<SksSubmission>,
@@ -56,12 +54,12 @@ async fn submit_sks(
 ) -> Result<Json<UserId>, ErrorResponse> {
     let mut ss = ss.lock().await;
 
-    ss.ensure(ServerState::ReadyForInputs)?;
+    ss.ensure(ServerState::ReadyForServerKeyShares)?;
 
     let SksSubmission { user_id, sks } = submission.0;
 
     let user = ss.get_user(user_id)?;
-    println!("{} submited data", user.name);
+    println!("{} submited server key share.", user.name);
     user.storage = UserStorage::Sks(Box::new(sks));
 
     if ss.check_cipher_submission() {
@@ -88,6 +86,7 @@ async fn request_action(
     let user = ss.get_user(user_id)?;
     println!("{} performed {}", user.name, action.to_string());
     let action = action.unpack(user_id);
+
     match action {
         UserAction::InitGame { initial_eggs } => {
             match &mut ss.game_state {
@@ -148,11 +147,15 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                 println!("Begin FHE run");
                                 // Long running
                                 let final_game_state = evaluate_circuit(game_state, &uas);
+
+                                // TODO //
                                 let cells = get_cells(&final_game_state, 4);
                                 let mut ss = s2.blocking_lock();
                                 ss.game_state = Some(final_game_state);
                                 let cells = CircuitOutput::new(cells);
-                                ss.cells = Some(cells);
+                                ss.circuit_output = Some(cells);
+                                // TODO //
+
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
                             })
@@ -179,7 +182,7 @@ async fn get_fhe_output(
 ) -> Result<Json<CircuitOutput>, ErrorResponse> {
     let ss = ss.lock().await;
     ss.ensure(ServerState::CompletedFhe)?;
-    let cells = ss.cells.clone().ok_or(Error::CellNotFound)?;
+    let cells = ss.circuit_output.clone().ok_or(Error::CellNotFound)?;
     Ok(Json(cells))
 }
 

@@ -8,8 +8,7 @@ mod types;
 pub use client::WebClient;
 pub use server::{rocket, setup};
 pub use types::{
-    recover, u64_to_binary, CircuitOutput, ClientKey, DecryptionSharesMap, ServerState, UserAction,
-    UserId, *,
+    CircuitOutput, ClientKey, DecryptionSharesMap, ServerState, UserAction, UserId, *,
 };
 
 #[cfg(test)]

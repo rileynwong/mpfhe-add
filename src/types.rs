@@ -250,6 +250,7 @@ pub struct CircuitOutput {
     cells: Vec<Word>,
 }
 
+// TODO //
 impl CircuitOutput {
     pub(crate) fn new(cells: Vec<Word>) -> Self {
         Self { cells }
@@ -303,6 +304,8 @@ fn decrypt_word(ck: &ClientKey, fhe_output: &Word, shares: &[DecryptionShare]) -
     decrypted_bits
 }
 
+// TODO //
+
 #[derive(Debug, Error)]
 pub(crate) enum Error {
     #[error("Wrong server state: expect {expect} but got {got}")]
@@ -348,8 +351,9 @@ impl From<Error> for ErrorResponse {
 pub enum ServerState {
     /// Users are allowed to join the computation
     ReadyForJoining,
-    /// The number of user is determined now.
-    /// We can now accept ciphertexts, which depends on the number of users.
+    /// We can now accept server key shares
+    ReadyForServerKeyShares,
+    /// We can now accept ciphertexts
     ReadyForInputs,
     ReadyForRunning,
     RunningFhe,
@@ -367,6 +371,7 @@ impl ServerState {
             })
         }
     }
+
     fn transit(&mut self, next: Self) {
         *self = next;
     }
@@ -388,7 +393,8 @@ pub(crate) struct ServerStorage {
 
     pub(crate) game_state: Option<GameStateEnc>,
     pub(crate) action_queue: Vec<(UserId, UserAction<Word>)>,
-    pub(crate) cells: Option<CircuitOutput>,
+    // in this case it is the users' cells
+    pub(crate) circuit_output: Option<CircuitOutput>,
 }
 
 impl ServerStorage {
@@ -400,7 +406,7 @@ impl ServerStorage {
 
             game_state: None,
             action_queue: vec![],
-            cells: None,
+            circuit_output: None,
         }
     }
 
@@ -502,23 +508,4 @@ pub(crate) struct DecryptionShareSubmission {
     pub(crate) user_id: UserId,
     /// The user sends decryption share for each [`Word`].
     pub(crate) decryption_shares: Vec<AnnotatedDecryptionShare>,
-}
-
-pub fn u64_to_binary<const N: usize>(v: u64) -> [bool; N] {
-    assert!((v as u128) < 2u128.pow(N as u32));
-    let mut result = [false; N];
-    for (i, bit) in result.iter_mut().enumerate() {
-        if (v >> i) & 1 == 1 {
-            *bit = true;
-        }
-    }
-    result
-}
-
-pub fn recover(bits: &[bool]) -> u16 {
-    let mut out = 0;
-    for (i, bit) in bits.iter().enumerate() {
-        out |= (*bit as u16) << i;
-    }
-    out
 }

@@ -75,6 +75,10 @@ impl Dashboard {
 
     /// An API for client to check server state
     pub fn is_concluded(&self) -> bool {
+        self.status == ServerState::ReadyForServerKeyShares
+    }
+
+    pub fn is_submit_sks_complete(&self) -> bool {
         self.status == ServerState::ReadyForInputs
     }
 

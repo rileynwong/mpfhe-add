@@ -1,8 +1,8 @@
 use crate::{
     dashboard::{Dashboard, RegisteredUser},
     types::{
-        CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Seed,
-        ServerKeyShare, ServerState, SksSubmission, UserAction, UserId, Word,
+        CircuitOutput, DecryptionShareSubmission, EncryptedWord, Seed, ServerKeyShare, ServerState,
+        SksSubmission, UserAction, UserId,
     },
     AnnotatedDecryptionShare, ClientKey, Direction,
 };
@@ -149,7 +149,6 @@ impl WebClient {
             .await
     }
 
-    /// This function can only be called by user 0
     pub async fn init_game(
         &self,
         ck: &ClientKey,
@@ -169,9 +168,6 @@ impl WebClient {
         let action = UserAction::set_starting_coord(ck, starting_coords);
         self.request_action(user_id, &action).await
     }
-
-    // Each round, client can submiit one of the 3 actions
-    // Action include (move_player, lay_egg, pickup_egg)
 
     pub async fn move_player(
         &self,
@@ -195,19 +191,9 @@ impl WebClient {
         self.request_action(user_id, &UserAction::Done).await
     }
 
-    /// After the actions submitted from all users,
-    /// they can call get_cell
     pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {
         self.request_action(user_id, &UserAction::GetCell).await
     }
-
-    // After get_cell, need to decrypt the result
-    // user i should be the last person to decrypt the result for his get_cell
-
-    // Server state
-    // Round start (each user can submiit one action)
-    // GetCell (each user can call get cell)
-    // DecryptResult (decrypt each user's result)
 
     pub async fn trigger_fhe_run(&self) -> Result<ServerState, Error> {
         self.post_nobody("/run").await
