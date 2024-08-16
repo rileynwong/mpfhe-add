@@ -43,7 +43,7 @@ impl Display for State {
             State::InitGame(_) => "Init game",
             State::SetupGame(_) => "Setup game",
             State::ConcludedSetupGame(_) => "Concluded setup game",
-            State::GameAction(_) => "Took an action",
+            State::GameAction(_) => "A player took an action",
             State::CompletedFhe(_) => "Completed FHE",
             State::DownloadedOutput(_) => "Downloaded Output",
             State::Decrypted(_) => "Decrypted",
@@ -65,7 +65,7 @@ impl State {
             State::InitGame(_) => "✅ New game start!".to_string(),
             State::SetupGame(_) => "✅ Set starting coordinates!".to_string(),
             State::ConcludedSetupGame(_) => "✅ Got all 4 starting coordinates!".to_string(),
-            State::GameAction(_) => "✅ Took an action!".to_string(),
+            State::GameAction(_) => "✅ A player took an action!".to_string(),
             State::CompletedFhe(_) => "✅ Completed FHE!".to_string(),
             State::DownloadedOutput(_) => "✅ FHE output downloaded!".to_string(),
             State::Decrypted(_) => "✅ FHE output decrypted!".to_string(),
@@ -325,6 +325,11 @@ async fn cmd_fhe_complete(client: &WebClient) -> Result<bool, Error> {
     Ok(d.is_fhe_complete())
 }
 
+async fn cmd_fhe_ongoing(client: &WebClient) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    Ok(d.is_fhe_ongoing())
+}
+
 async fn cmd_download_output(
     client: &WebClient,
     user_id: &UserId,
@@ -469,9 +474,9 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         Ok(State::SetupGame(s))
                     }
                 }
-                Err(err) => Err((err, State::GameAction(s))),
+                Err(err) => Err((err, State::SetupGame(s))),
             },
-            State::ConcludedSetupGame(s) => Ok(State::ConcludedSetupGame(s)),
+            State::ConcludedSetupGame(s) => Ok(State::CompletedFhe(s)),
             State::GameAction(s) => match cmd_fhe_complete(&s.client).await {
                 Ok(is_complete) => {
                     if is_complete {
@@ -541,7 +546,24 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         names: s.names,
                         view,
                     })),
-                    Err(err) => Err((err, State::SetupGame(s))),
+                    Err(err) => {
+                        if err.to_string().contains("Wrong server state") {
+                            let result = match cmd_fhe_ongoing(&s.client).await {
+                                Ok(is_ongoing) => {
+                                    if is_ongoing {
+                                        println!("❌ Your action DID NOT take effect!");
+                                        println!("Another player took an action first. Let's decrypt their output first.");
+                                        Ok(State::GameAction(s))
+                                    } else {
+                                        Err((err, State::ConcludedSetupGame(s)))
+                                    }
+                                }
+                                Err(err) => Err((err, State::ConcludedSetupGame(s))),
+                            };
+                            return result;
+                        }
+                        Err((err, State::ConcludedSetupGame(s)))
+                    }
                 }
             }
             _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
@@ -557,7 +579,24 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     names: s.names,
                     view,
                 })),
-                Err(err) => Err((err, State::SetupGame(s))),
+                Err(err) => {
+                    if err.to_string().contains("Wrong server state") {
+                        let result = match cmd_fhe_ongoing(&s.client).await {
+                            Ok(is_ongoing) => {
+                                if is_ongoing {
+                                    println!("❌ Your action DID NOT take effect!");
+                                    println!("Another player took an action first. Let's decrypt their output first.");
+                                    Ok(State::GameAction(s))
+                                } else {
+                                    Err((err, State::ConcludedSetupGame(s)))
+                                }
+                            }
+                            Err(err) => Err((err, State::ConcludedSetupGame(s))),
+                        };
+                        return result;
+                    }
+                    Err((err, State::ConcludedSetupGame(s)))
+                }
             },
             _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
         }
@@ -572,7 +611,24 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     names: s.names,
                     view,
                 })),
-                Err(err) => Err((err, State::SetupGame(s))),
+                Err(err) => {
+                    if err.to_string().contains("Wrong server state") {
+                        let result = match cmd_fhe_ongoing(&s.client).await {
+                            Ok(is_ongoing) => {
+                                if is_ongoing {
+                                    println!("❌ Your action DID NOT take effect!");
+                                    println!("Another player took an action first. Let's decrypt their output first.");
+                                    Ok(State::GameAction(s))
+                                } else {
+                                    Err((err, State::ConcludedSetupGame(s)))
+                                }
+                            }
+                            Err(err) => Err((err, State::ConcludedSetupGame(s))),
+                        };
+                        return result;
+                    }
+                    Err((err, State::ConcludedSetupGame(s)))
+                }
             },
             _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
         }

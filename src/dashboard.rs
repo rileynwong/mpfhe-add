@@ -85,7 +85,13 @@ impl Dashboard {
     }
 
     pub fn is_setup_game_complete(&self) -> bool {
-        self.status == ServerState::ReadyForActions
+        self.status != ServerState::ReadyForSetupGame
+    }
+
+    pub fn is_fhe_ongoing(&self) -> bool {
+        self.status == ServerState::ReadyForRunning
+            || self.status == ServerState::RunningFhe
+            || self.status == ServerState::CompletedFhe
     }
 
     pub fn is_fhe_complete(&self) -> bool {

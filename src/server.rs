@@ -119,7 +119,7 @@ async fn setup_game(
             Ok(Json(user_id))
         }
         _ => Err(Error::WrongServerState {
-            expect: ServerState::ReadyForRunning.to_string(),
+            expect: ServerState::ReadyForSetupGame.to_string(),
             got: ss.state.to_string(),
         }
         .into()),
@@ -159,7 +159,7 @@ async fn request_action(
             Ok(Json(user_id))
         }
         _ => Err(Error::WrongServerState {
-            expect: ServerState::ReadyForRunning.to_string(),
+            expect: ServerState::ReadyForActions.to_string(),
             got: ss.state.to_string(),
         }
         .into()),
