@@ -116,6 +116,9 @@ async fn setup_game(
             };
             if ss.check_setup_game_complete() {
                 ss.transit(ServerState::ReadyForActions);
+                for user in ss.users.iter_mut() {
+                    user.storage = UserStorage::DecryptionShare(None);
+                }
             }
             Ok(Json(user_id))
         }

@@ -140,7 +140,7 @@ impl GameStateLocalView {
     pub fn print_with_output(&self, output: &[bool]) {
         println!("----------------Global View-------------------");
         println!("(Only my cell is decrypted)");
-        println!("(My coordinates {:?}", self.my_coord);
+        println!("My coordinates {:?}", self.my_coord);
 
         let mut data = vec![];
         for _ in 0..BOARD_DIM {
@@ -428,7 +428,6 @@ impl ServerStorage {
         for (user_id, user) in self.users.iter_mut().enumerate() {
             if let Some(sks) = user.storage.get_cipher_sks() {
                 server_key_shares.push(sks.clone());
-                user.storage = UserStorage::DecryptionShare(None);
             } else {
                 return Err(Error::CipherNotFound { user_id });
             }

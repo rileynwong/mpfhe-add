@@ -381,6 +381,7 @@ async fn cmd_download_shares(
 ) -> Result<Vec<bool>, Error> {
     let total_users = names.len();
     println!("Acquiring decryption shares needed");
+    dbg!(&shares);
     for user_id in 0..total_users {
         if shares.get(&user_id).is_none() {
             let ds = client.get_decryption_share(0, user_id).await?;

@@ -40,11 +40,17 @@ impl RegisteredUser {
 impl From<&UserRecord> for RegisteredUser {
     fn from(user: &UserRecord) -> Self {
         use crate::types::UserStorage::*;
-        let status = match user.storage {
+        let status = match &user.storage {
             Empty => UserStatus::IDAcquired,
             Sks(_) => UserStatus::SksSubmitted,
             StartingCoords => UserStatus::StartingCoordsSubmitted,
-            DecryptionShare(_) => UserStatus::DecryptionShareSubmitted,
+            DecryptionShare(share) => {
+                let result = match share {
+                    Some(_) => UserStatus::DecryptionShareSubmitted,
+                    None => UserStatus::StartingCoordsSubmitted,
+                };
+                result
+            }
         };
 
         Self {
