@@ -33,6 +33,9 @@ pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 /// Decryption share for a word from one user.
 pub type DecryptionShare = Vec<u64>;
 
+/// Decryption share with output id
+pub(crate) type AnnotatedDecryptionShare = (usize, DecryptionShare);
+
 pub const BOARD_DIM: usize = 4;
 pub const BOARD_SIZE: usize = BOARD_DIM * BOARD_DIM;
 
@@ -368,8 +371,10 @@ pub(crate) struct ServerStorage {
 
     pub(crate) game_state: Option<GameStateEnc>,
     pub(crate) action_queue: Vec<(UserId, UserAction<Word>)>,
-    // in this case it is the users' cells
+    // in this case it is the user's cell
     pub(crate) circuit_output: Option<CircuitOutput>,
+    pub(crate) round: usize,
+    pub(crate) decryption_shares: DecryptionSharesMap,
 }
 
 impl ServerStorage {
@@ -382,6 +387,8 @@ impl ServerStorage {
             game_state: None,
             action_queue: vec![],
             circuit_output: None,
+            round: 0,
+            decryption_shares: HashMap::new(),
         }
     }
 
@@ -441,7 +448,11 @@ impl ServerStorage {
     }
 
     pub(crate) fn get_dashboard(&self) -> Dashboard {
-        Dashboard::new(&self.state, &self.users.iter().map_into().collect_vec())
+        Dashboard::new(
+            &self.state,
+            &self.users.iter().map_into().collect_vec(),
+            self.round,
+        )
     }
 }
 
@@ -478,7 +489,7 @@ impl UserStorage {
 }
 
 /// ([`Word`] index, user_id) -> decryption share
-pub type DecryptionSharesMap = HashMap<UserId, DecryptionShare>;
+pub type DecryptionSharesMap = HashMap<(usize, UserId), DecryptionShare>;
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
@@ -491,5 +502,5 @@ pub(crate) struct SksSubmission {
 #[serde(crate = "rocket::serde")]
 pub(crate) struct DecryptionShareSubmission {
     pub(crate) user_id: UserId,
-    pub(crate) decryption_share: DecryptionShare,
+    pub(crate) decryption_share: AnnotatedDecryptionShare,
 }

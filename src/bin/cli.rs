@@ -68,7 +68,7 @@ impl State {
             State::ConcludedSubmitSks(_) => "✅ Got all 4 server key shares!".to_string(),
             State::InitGame(_) => "✅ New game start!".to_string(),
             State::SetupGame(_) => "✅ Set starting coordinates!".to_string(),
-            State::ConcludedSetupGame(_) => "✅ Got all 4 starting coordinates!".to_string(),
+            State::ConcludedSetupGame(_) => "✅ Ready for an action!".to_string(),
             State::GameAction(_) => "✅ A player took an action!".to_string(),
             State::CompletedFhe(_) => "✅ Completed FHE!".to_string(),
             State::DownloadedOutput(_) => "✅ FHE output downloaded!".to_string(),
@@ -127,6 +127,7 @@ struct StateGame {
     user_id: UserId,
     names: Vec<String>,
     view: GameStateLocalView,
+    round: usize,
 }
 
 struct StateGameAction {
@@ -137,6 +138,7 @@ struct StateGameAction {
     names: Vec<String>,
     view: GameStateLocalView,
     is_my_action: bool, // whether I took the action, or other players took the action
+    round: usize,
 }
 
 struct StateDownloadedOutput {
@@ -150,6 +152,7 @@ struct StateDownloadedOutput {
     shares: DecryptionSharesMap,
     view: GameStateLocalView,
     is_my_action: bool, // only decrypt if it is my action
+    round: usize,
 }
 
 struct StateDecrypted {
@@ -162,6 +165,7 @@ struct StateDecrypted {
     view: GameStateLocalView,
     is_my_action: bool,
     decrypted_output: Option<Vec<bool>>,
+    round: usize,
 }
 
 #[tokio::main]
@@ -361,6 +365,7 @@ async fn cmd_download_output(
     user_id: &UserId,
     ck: &ClientKey,
     should_submit_shares: bool,
+    round: usize,
 ) -> Result<(CircuitOutput, DecryptionSharesMap), Error> {
     let resp = client.trigger_fhe_run(*user_id).await?;
     if !matches!(resp, ServerState::CompletedFhe) {
@@ -373,12 +378,12 @@ async fn cmd_download_output(
     println!("Generating my decrypting shares");
     let mut shares = HashMap::new();
     let my_decryption_share = fhe_out.gen_decryption_share(ck);
-    shares.insert(*user_id, my_decryption_share.clone());
+    shares.insert((round, *user_id), my_decryption_share.clone());
 
     if should_submit_shares {
         println!("Submitting my decrypting shares");
         client
-            .submit_decryption_share(*user_id, &my_decryption_share)
+            .submit_decryption_share(*user_id, &(round, my_decryption_share))
             .await?;
     }
 
@@ -401,18 +406,19 @@ async fn cmd_download_shares(
     shares: &mut DecryptionSharesMap,
     co: &CircuitOutput,
     view: &GameStateLocalView,
+    round: usize,
 ) -> Result<Vec<bool>, Error> {
     let total_users = names.len();
     println!("Acquiring decryption shares needed");
     for user_id in 0..total_users {
-        if shares.get(&user_id).is_none() {
-            let ds = client.get_decryption_share(user_id).await?;
-            shares.insert(user_id, ds);
+        if shares.get(&(round, user_id)).is_none() {
+            let ds = client.get_decryption_share(round, user_id).await?;
+            shares.insert((round, user_id), ds);
         }
     }
     println!("Decrypt the encrypted output");
     let dss = (0..total_users)
-        .map(|user_id| shares.get(&user_id).expect("exists").to_owned())
+        .map(|user_id| shares.get(&(round, user_id)).expect("exists").to_owned())
         .collect_vec();
     let decrypted_output = co.decrypt(ck, &dss);
     println!("Final decrypted output: {:?}", decrypted_output);
@@ -425,9 +431,9 @@ async fn cmd_done(client: &WebClient, user_id: UserId) -> Result<(), Error> {
     Ok(())
 }
 
-async fn cmd_ready_for_actions(client: &WebClient) -> Result<bool, Error> {
+async fn cmd_ready_for_actions(client: &WebClient, round: usize) -> Result<bool, Error> {
     let d = client.get_dashboard().await?;
-    Ok(d.is_ready_for_actions())
+    Ok(d.is_ready_for_actions(round))
 }
 
 async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
@@ -489,6 +495,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         user_id: s.user_id,
                         names: s.names,
                         view: GameStateLocalView::new(0, 0, s.user_id),
+                        round: 0,
                     })),
                     Err(err) => Err((err, State::ConcludedSubmitSks(s))),
                 }
@@ -519,7 +526,9 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 Err(err) => Err((err, State::GameAction(s))),
             },
             State::CompletedFhe(s) => {
-                match cmd_download_output(&s.client, &s.user_id, &s.ck, !s.is_my_action).await {
+                match cmd_download_output(&s.client, &s.user_id, &s.ck, !s.is_my_action, s.round)
+                    .await
+                {
                     Ok((fhe_out, shares)) => Ok(State::DownloadedOutput(StateDownloadedOutput {
                         name: s.name,
                         client: s.client,
@@ -530,6 +539,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         shares,
                         view: s.view,
                         is_my_action: s.is_my_action,
+                        round: s.round,
                     })),
                     Err(err) => Err((err, State::CompletedFhe(s))),
                 }
@@ -545,6 +555,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         view: s.view,
                         decrypted_output: None,
                         is_my_action: false,
+                        round: s.round,
                     }));
                 }
                 match cmd_decryption_submission_completed(&s.client, &s.user_id).await {
@@ -567,6 +578,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     &mut s.shares,
                     &s.fhe_out,
                     &s.view,
+                    s.round,
                 )
                 .await
                 {
@@ -579,6 +591,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         decrypted_output: Some(decrypted_output),
                         view: s.view,
                         is_my_action: true,
+                        round: s.round,
                     })),
                     Err(err) => Err((err, State::DownloadedOutput(s))),
                 }
@@ -591,13 +604,17 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     user_id: s.user_id,
                     names: s.names,
                     view: s.view,
+                    round: s.round,
                 })),
                 Err(err) => Err((err, State::Decrypted(s))),
             },
-            State::NewRound(s) => match cmd_ready_for_actions(&s.client).await {
+            State::NewRound(s) => match cmd_ready_for_actions(&s.client, s.round).await {
                 Ok(is_ready) => {
                     if is_ready {
-                        Ok(State::ConcludedSetupGame(s))
+                        Ok(State::ConcludedSetupGame(StateGame {
+                            round: s.round + 1,
+                            ..s
+                        }))
                     } else {
                         Ok(State::NewRound(s))
                     }
@@ -617,6 +634,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         ck: s.ck,
                         user_id: s.user_id,
                         names: s.names,
+                        round: s.round,
                     })),
                     Err(err) => {
                         if err.to_string().contains("Wrong server state") {
@@ -633,6 +651,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                                             user_id: s.user_id,
                                             names: s.names,
                                             view: s.view,
+                                            round: s.round,
                                         }))
                                     } else {
                                         Err((err, State::ConcludedSetupGame(s)))
@@ -659,6 +678,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     ck: s.ck,
                     user_id: s.user_id,
                     names: s.names,
+                    round: s.round,
                 })),
                 Err(err) => {
                     if err.to_string().contains("Wrong server state") {
@@ -675,6 +695,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                                         user_id: s.user_id,
                                         names: s.names,
                                         view: s.view,
+                                        round: s.round,
                                     }))
                                 } else {
                                     Err((err, State::ConcludedSetupGame(s)))
@@ -700,6 +721,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     ck: s.ck,
                     user_id: s.user_id,
                     names: s.names,
+                    round: s.round,
                 })),
                 Err(err) => {
                     if err.to_string().contains("Wrong server state") {
@@ -716,6 +738,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                                         user_id: s.user_id,
                                         names: s.names,
                                         view: s.view,
+                                        round: s.round,
                                     }))
                                 } else {
                                     Err((err, State::ConcludedSetupGame(s)))

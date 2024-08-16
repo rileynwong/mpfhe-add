@@ -65,12 +65,14 @@ impl From<&UserRecord> for RegisteredUser {
 pub struct Dashboard {
     status: ServerState,
     users: Vec<RegisteredUser>,
+    round: usize,
 }
 impl Dashboard {
-    pub(crate) fn new(status: &ServerState, users: &[RegisteredUser]) -> Self {
+    pub(crate) fn new(status: &ServerState, users: &[RegisteredUser], round: usize) -> Self {
         Self {
             status: status.clone(),
             users: users.to_vec(),
+            round,
         }
     }
 
@@ -79,6 +81,10 @@ impl Dashboard {
             .iter()
             .map(|reg| reg.name.to_string())
             .collect_vec()
+    }
+
+    pub fn get_round(&self) -> usize {
+        self.round
     }
 
     /// APIs for client to check server state
@@ -113,11 +119,12 @@ impl Dashboard {
         true
     }
 
-    pub fn is_ready_for_actions(&self) -> bool {
-        self.status == ServerState::ReadyForActions
+    pub fn is_ready_for_actions(&self, round: usize) -> bool {
+        self.status == ServerState::ReadyForActions || self.round > round
     }
 
     pub fn print_presentation(&self) {
+        println!("action no. {}", self.round);
         println!("🤖🧠 {}", self.status);
         let users = Table::new(&self.users)
             .with(Style::ascii_rounded())

@@ -1,8 +1,8 @@
 use crate::{
     dashboard::{Dashboard, RegisteredUser},
     types::{
-        CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Seed,
-        ServerKeyShare, ServerState, SksSubmission, UserAction, UserId,
+        AnnotatedDecryptionShare, CircuitOutput, DecryptionShare, DecryptionShareSubmission,
+        EncryptedWord, Seed, ServerKeyShare, ServerState, SksSubmission, UserAction, UserId,
     },
     ClientKey, Direction,
 };
@@ -217,7 +217,7 @@ impl WebClient {
     pub async fn submit_decryption_share(
         &self,
         user_id: usize,
-        decryption_share: &DecryptionShare,
+        decryption_share: &AnnotatedDecryptionShare,
     ) -> Result<UserId, Error> {
         let submission = DecryptionShareSubmission {
             user_id,
@@ -227,8 +227,13 @@ impl WebClient {
             .await
     }
 
-    pub async fn get_decryption_share(&self, user_id: usize) -> Result<DecryptionShare, Error> {
-        self.get(&format!("/decryption_share/{user_id}")).await
+    pub async fn get_decryption_share(
+        &self,
+        output_id: usize,
+        user_id: usize,
+    ) -> Result<DecryptionShare, Error> {
+        self.get(&format!("/decryption_share/{output_id}/{user_id}"))
+            .await
     }
 }
 
