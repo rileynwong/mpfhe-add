@@ -288,8 +288,8 @@ pub(crate) enum Error {
     UnregisteredUser { user_id: usize },
     #[error("The ciphertext from user #{user_id} not found")]
     CipherNotFound { user_id: UserId },
-    #[error("Decryption share of {output_id} from user {user_id} not found")]
-    DecryptionShareNotFound { output_id: usize, user_id: UserId },
+    #[error("Decryption share from user {user_id} not found")]
+    DecryptionShareNotFound { user_id: UserId },
     /// Temporary here
     #[error("Output not ready")]
     OutputNotReady,

@@ -104,6 +104,15 @@ impl Dashboard {
         self.status == ServerState::CompletedFhe
     }
 
+    pub fn is_decryption_shares_submission_complete(&self, user_id: UserId) -> bool {
+        for user in self.users.iter() {
+            if user.id != user_id && !matches!(user.status, UserStatus::DecryptionShareSubmitted) {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn print_presentation(&self) {
         println!("🤖🧠 {}", self.status);
         let users = Table::new(&self.users)

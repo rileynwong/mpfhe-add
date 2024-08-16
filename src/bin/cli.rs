@@ -29,6 +29,7 @@ enum State {
     GameAction(StateGameAction),
     CompletedFhe(StateGameAction),
     DownloadedOutput(StateDownloadedOutput),
+    ConcludedDecryptionSubmission(StateDownloadedOutput),
     Decrypted(StateDecrypted),
 }
 
@@ -46,6 +47,7 @@ impl Display for State {
             State::GameAction(_) => "A player took an action",
             State::CompletedFhe(_) => "Completed FHE",
             State::DownloadedOutput(_) => "Downloaded Output",
+            State::ConcludedDecryptionSubmission(_) => "Concluded decryption share submission",
             State::Decrypted(_) => "Decrypted",
         };
         write!(f, "{{{{ {} }}}}", label)
@@ -68,6 +70,9 @@ impl State {
             State::GameAction(_) => "✅ A player took an action!".to_string(),
             State::CompletedFhe(_) => "✅ Completed FHE!".to_string(),
             State::DownloadedOutput(_) => "✅ FHE output downloaded!".to_string(),
+            State::ConcludedDecryptionSubmission(_) => {
+                "✅ Decryption shares submitted!".to_string()
+            }
             State::Decrypted(_) => "✅ FHE output decrypted!".to_string(),
         };
         println!("{}", msg)
@@ -83,6 +88,7 @@ impl State {
             State::SetupGame(_) => "Wait for every user to set starting coordinates. Enter `next` to check if we can proceed.",
             State::ConcludedSetupGame(_) => "Enter one of the commands {`move up` | `move down` | `move left` | `move right` | `lay` | `pickup`}",
             State::GameAction(_) => "Server running FHE. Enter `next` to check if it completed",
+            State::DownloadedOutput(_) => "Wait for other players to submit decryption shares. Enter `next` to check if we can proceed.",
             State::Decrypted(_) => "Exit with `CTRL-D`",
             _ => "Enter `next` to continue",
         };
@@ -371,6 +377,15 @@ async fn cmd_download_output(
     Ok((fhe_out, shares))
 }
 
+async fn cmd_decryption_submission_completed(
+    client: &WebClient,
+    user_id: &UserId,
+) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    d.print_presentation();
+    Ok(d.is_decryption_shares_submission_complete(*user_id))
+}
+
 async fn cmd_download_shares(
     client: &WebClient,
     names: &[String],
@@ -381,10 +396,9 @@ async fn cmd_download_shares(
 ) -> Result<Vec<bool>, Error> {
     let total_users = names.len();
     println!("Acquiring decryption shares needed");
-    dbg!(&shares);
     for user_id in 0..total_users {
         if shares.get(&user_id).is_none() {
-            let ds = client.get_decryption_share(0, user_id).await?;
+            let ds = client.get_decryption_share(user_id).await?;
             shares.insert(user_id, ds);
         }
     }
@@ -510,7 +524,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     Err(err) => Err((err, State::CompletedFhe(s))),
                 }
             }
-            State::DownloadedOutput(mut s) => {
+            State::DownloadedOutput(s) => {
                 if !s.is_my_action {
                     return Ok(State::Decrypted(StateDecrypted {
                         names: s.names,
@@ -519,6 +533,19 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                         view: s.view,
                     }));
                 }
+                match cmd_decryption_submission_completed(&s.client, &s.user_id).await {
+                    Ok(is_complete) => {
+                        if is_complete {
+                            Ok(State::ConcludedDecryptionSubmission(s))
+                        } else {
+                            Ok(State::DownloadedOutput(s))
+                        }
+                    }
+                    Err(err) => Err((err, State::DownloadedOutput(s))),
+                }
+            }
+
+            State::ConcludedDecryptionSubmission(mut s) => {
                 match cmd_download_shares(
                     &s.client,
                     &s.names,
@@ -678,6 +705,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             | State::GameAction(StateGameAction { client, .. })
             | State::CompletedFhe(StateGameAction { client, .. })
             | State::DownloadedOutput(StateDownloadedOutput { client, .. })
+            | State::ConcludedDecryptionSubmission(StateDownloadedOutput { client, .. })
             | State::Decrypted(StateDecrypted { client, .. }) => {
                 match client.get_dashboard().await {
                     Ok(dashbaord) => {

@@ -253,9 +253,8 @@ async fn submit_decryption_share(
     Ok(Json(user_id))
 }
 
-#[get("/decryption_share/<fhe_output_id>/<user_id>")]
+#[get("/decryption_share/<user_id>")]
 async fn get_decryption_share(
-    fhe_output_id: usize,
     user_id: UserId,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<DecryptionShare>, ErrorResponse> {
@@ -266,10 +265,7 @@ async fn get_decryption_share(
         .get_mut_decryption_share()
         .cloned()
         .ok_or(Error::OutputNotReady)?
-        .ok_or(Error::DecryptionShareNotFound {
-            output_id: fhe_output_id,
-            user_id,
-        })?;
+        .ok_or(Error::DecryptionShareNotFound { user_id })?;
     Ok(Json(decryption_share.clone()))
 }
 
