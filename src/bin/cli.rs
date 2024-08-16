@@ -1,15 +1,13 @@
-use anyhow::{anyhow, bail, ensure, Error};
+use anyhow::{anyhow, bail, Error};
+use chickens::{
+    setup, CircuitOutput, DecryptionSharesMap, Direction, GameStateLocalView, ServerState, UserId,
+    WebClient, BOARD_SIZE,
+};
 use clap::{command, Parser};
 use itertools::Itertools;
-use karma_calculator::{
-    gen_decryption_shares, setup, AnnotatedDecryptionShare, CircuitOutput, DecryptionShare,
-    DecryptionSharesMap, Direction, GameStateLocalView, Score, ServerState, UserAction, UserId,
-    WebClient, Word, BOARD_SIZE,
-};
 use phantom_zone::{gen_client_key, gen_server_key_share, ClientKey};
 use rustyline::{error::ReadlineError, DefaultEditor};
-use std::{collections::HashMap, fmt::Display, iter::zip};
-use tabled::{settings::Style, Table, Tabled};
+use std::{collections::HashMap, fmt::Display};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -23,10 +21,17 @@ enum State {
     Init(StateInit),
     Setup(StateSetup),
     ConcludedRegistration(Registration),
-    SubmittedSks(SubmittedSks),
-    TriggeredRun(StateTriggeredRun),
-    DownloadedOutput(StateDownloadedOuput),
+    SubmittedSks(Registration),
+    ConcludedSubmitSks(Registration),
+    InitGame(StateGame),
+    SetupGame(StateGame), // set starting coordinates
+    ConcludedSetupGame(StateGame),
+    GameAction(StateGameAction),
+    CompletedFhe(StateGameAction),
+    DownloadedOutput(StateDownloadedOutput),
+    ConcludedDecryptionSubmission(StateDownloadedOutput),
     Decrypted(StateDecrypted),
+    NewRound(StateGame),
 }
 
 impl Display for State {
@@ -34,11 +39,18 @@ impl Display for State {
         let label = match self {
             State::Init(_) => "Initialization",
             State::Setup(_) => "Setup",
-            State::ConcludedRegistration(_) => "ConcludedRegistration",
-            State::SubmittedSks(_) => "SubmittedSks",
-            State::TriggeredRun(_) => "Triggered Run",
+            State::ConcludedRegistration(_) => "Concluded Registration",
+            State::SubmittedSks(_) => "Submitted Server Key Share",
+            State::ConcludedSubmitSks(_) => "Concluded SubmitSks",
+            State::InitGame(_) => "Init game",
+            State::SetupGame(_) => "Setup game",
+            State::ConcludedSetupGame(_) => "Concluded setup game",
+            State::GameAction(_) => "A player took an action",
+            State::CompletedFhe(_) => "Completed FHE",
             State::DownloadedOutput(_) => "Downloaded Output",
+            State::ConcludedDecryptionSubmission(_) => "Concluded decryption share submission",
             State::Decrypted(_) => "Decrypted",
+            State::NewRound(_) => "Ready for another action",
         };
         write!(f, "{{{{ {} }}}}", label)
     }
@@ -51,19 +63,37 @@ impl State {
                 format!("Hi {}, we just connected to server {}.", name, client.url())
             }
             State::Setup(StateSetup { .. }) => "✅ Setup completed!".to_string(),
-            State::ConcludedRegistration(_) => "Sks sent".to_string(),
-            State::SubmittedSks(_) => "✅ Ciphertext submitted!".to_string(),
-            State::TriggeredRun(_) => "✅ FHE run triggered!".to_string(),
+            State::ConcludedRegistration(_) => "✅ Got 4 players!".to_string(),
+            State::SubmittedSks(_) => "✅ Server key share submitted!".to_string(),
+            State::ConcludedSubmitSks(_) => "✅ Got all 4 server key shares!".to_string(),
+            State::InitGame(_) => "✅ New game start!".to_string(),
+            State::SetupGame(_) => "✅ Set starting coordinates!".to_string(),
+            State::ConcludedSetupGame(_) => "✅ Got all 4 starting coordinates!".to_string(),
+            State::GameAction(_) => "✅ A player took an action!".to_string(),
+            State::CompletedFhe(_) => "✅ Completed FHE!".to_string(),
             State::DownloadedOutput(_) => "✅ FHE output downloaded!".to_string(),
+            State::ConcludedDecryptionSubmission(_) => {
+                "✅ Decryption shares submitted!".to_string()
+            }
             State::Decrypted(_) => "✅ FHE output decrypted!".to_string(),
+            State::NewRound(_) => "✅ Ready for another action!".to_string(),
         };
         println!("{}", msg)
     }
 
     fn print_instruction(&self) {
         let msg = match self {
-            State::Setup(_) => "Enter `conclude` to end registration or `next` to proceed",
-            State::Decrypted(_) => "Exit with `CTRL-D`",
+            State::Setup(_) => "We need 4 players. Enter `next` to check if we can proceed.",
+            State::SubmittedSks(_) =>
+                "Server needs to get all 4 server key shares. Enter `next` to check if we can proceed.",
+            State::ConcludedSubmitSks(_) => "Enter `next` to start a new game.",
+            State::InitGame(_) => "Enter `next ${x} ${y}` with your starting coordinates (x, y).\n The board is 4 x 4, so x, y has to be in the range [0, 3]." ,
+            State::SetupGame(_) => "Wait for every user to set starting coordinates. Enter `next` to check if we can proceed.",
+            State::ConcludedSetupGame(_) => "Enter one of the commands {`move up` | `move down` | `move left` | `move right` | `lay` | `pickup`}",
+            State::GameAction(_) => "Server running FHE. Enter `next` to check if it completed",
+            State::DownloadedOutput(_) => "Wait for other players to submit decryption shares. Enter `next` to check if we can proceed.",
+            State::Decrypted(_) => "Enter `next` to take another action; Or exit with `CTRL-D`",
+            State::NewRound(_) => "Wait for other users to be ready. Enter `next` check if we can proceed.",
             _ => "Enter `next` to continue",
         };
         println!("👇 {}", msg)
@@ -90,7 +120,7 @@ struct Registration {
     names: Vec<String>,
 }
 
-struct SubmittedSks {
+struct StateGame {
     name: String,
     client: WebClient,
     ck: ClientKey,
@@ -99,16 +129,17 @@ struct SubmittedSks {
     view: GameStateLocalView,
 }
 
-struct StateTriggeredRun {
+struct StateGameAction {
     name: String,
     client: WebClient,
     ck: ClientKey,
     user_id: UserId,
     names: Vec<String>,
     view: GameStateLocalView,
+    is_my_action: bool, // whether I took the action, or other players took the action
 }
 
-struct StateDownloadedOuput {
+struct StateDownloadedOutput {
     #[allow(dead_code)]
     name: String,
     client: WebClient,
@@ -118,13 +149,19 @@ struct StateDownloadedOuput {
     fhe_out: CircuitOutput,
     shares: DecryptionSharesMap,
     view: GameStateLocalView,
+    is_my_action: bool, // only decrypt if it is my action
 }
 
 struct StateDecrypted {
-    names: Vec<String>,
+    #[allow(dead_code)]
+    name: String,
     client: WebClient,
-    decrypted_output: Vec<Vec<bool>>,
+    ck: ClientKey,
+    user_id: UserId,
+    names: Vec<String>,
     view: GameStateLocalView,
+    is_my_action: bool,
+    decrypted_output: Option<Vec<bool>>,
 }
 
 #[tokio::main]
@@ -195,7 +232,22 @@ async fn cmd_get_names(client: &WebClient) -> Result<(bool, Vec<String>), Error>
     Ok((d.is_concluded(), d.get_names()))
 }
 
-async fn cmd_init(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
+async fn cmd_submit_sks(client: &WebClient, ck: &ClientKey, user_id: &UserId) -> Result<(), Error> {
+    let total_users = 4;
+    println!("Generating server key share");
+    let sks = gen_server_key_share(*user_id, total_users, ck);
+    println!("Submit server key share");
+    client.submit_sks(*user_id, &sks).await?;
+    Ok(())
+}
+
+async fn cmd_check_submit_sks_complete(client: &WebClient) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    d.print_presentation();
+    Ok(d.is_submit_sks_complete())
+}
+
+async fn cmd_init_game(client: &WebClient, ck: &ClientKey, user_id: UserId) -> Result<(), Error> {
     let initial_eggs = [false; BOARD_SIZE];
     client.init_game(ck, user_id, &initial_eggs).await?;
     Ok(())
@@ -209,17 +261,30 @@ async fn cmd_setup_game(
 ) -> Result<GameStateLocalView, Error> {
     let x = args
         .get(0)
-        .ok_or_else(|| anyhow!("please add init x"))?
+        .ok_or_else(|| anyhow!("please add init x coordinate"))?
         .parse::<u8>()?;
     let y = args
         .get(1)
-        .ok_or_else(|| anyhow!("please add init y"))?
+        .ok_or_else(|| anyhow!("please add init y coordinate"))?
         .parse::<u8>()?;
+
+    if x > 3 {
+        return Err(anyhow!("init x coordinate has to be in the range [0, 3]"));
+    }
+    if y > 3 {
+        return Err(anyhow!("init y coordinate has to be in the range [0, 3]"));
+    }
 
     let view = GameStateLocalView::new(x, y, user_id);
     client.set_starting_coords(ck, user_id, &(x, y)).await?;
     view.print();
     Ok(view)
+}
+
+async fn cmd_setup_game_complete(client: &WebClient) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    d.print_presentation();
+    Ok(d.is_setup_game_complete())
 }
 
 async fn cmd_move(
@@ -244,6 +309,7 @@ async fn cmd_move(
     let mut view = view.clone();
     view.move_player(direction);
     view.print();
+    trigger_run(client, user_id).await?;
     Ok(view)
 }
 
@@ -256,6 +322,7 @@ async fn cmd_lay(
     let mut view = view.clone();
     view.lay();
     view.print();
+    trigger_run(client, user_id).await?;
     Ok(view)
 }
 
@@ -268,42 +335,34 @@ async fn cmd_pickup(
     let mut view = view.clone();
     view.pickup();
     view.print();
+    trigger_run(client, user_id).await?;
     Ok(view)
 }
 
-async fn cmd_done(client: &WebClient, user_id: UserId) -> Result<(), Error> {
-    client.done(user_id).await?;
-    Ok(())
-}
-
-async fn cmd_submit_sks(
-    args: &[&str],
-    client: &WebClient,
-    user_id: &UserId,
-    names: &Vec<String>,
-    ck: &ClientKey,
-) -> Result<(), Error> {
-    let total_users = 4;
-    println!("Generating server key share");
-    let sks = gen_server_key_share(*user_id, total_users, ck);
-    println!("Submit server key share");
-    client.submit_sks(*user_id, &sks).await?;
-    Ok(())
-}
-
-async fn cmd_run(client: &WebClient) -> Result<(), Error> {
+async fn trigger_run(client: &WebClient, user_id: UserId) -> Result<(), Error> {
     println!("Requesting FHE run ...");
-    let resp = client.trigger_fhe_run().await?;
+    let resp = client.trigger_fhe_run(user_id).await?;
     println!("Server: {}", resp);
     Ok(())
+}
+
+async fn cmd_fhe_complete(client: &WebClient) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    Ok(d.is_fhe_complete())
+}
+
+async fn cmd_fhe_ongoing(client: &WebClient) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    Ok(d.is_fhe_ongoing())
 }
 
 async fn cmd_download_output(
     client: &WebClient,
     user_id: &UserId,
     ck: &ClientKey,
-) -> Result<(CircuitOutput, HashMap<(usize, UserId), Vec<u64>>), Error> {
-    let resp = client.trigger_fhe_run().await?;
+    should_submit_shares: bool,
+) -> Result<(CircuitOutput, DecryptionSharesMap), Error> {
+    let resp = client.trigger_fhe_run(*user_id).await?;
     if !matches!(resp, ServerState::CompletedFhe) {
         bail!("FHE is still running")
     }
@@ -313,51 +372,57 @@ async fn cmd_download_output(
 
     println!("Generating my decrypting shares");
     let mut shares = HashMap::new();
-    let my_decryption_shares: Vec<AnnotatedDecryptionShare> = fhe_out.gen_decryption_shares(ck);
-    for (out_id, share) in my_decryption_shares.iter() {
-        shares.insert((*out_id, *user_id), share.to_vec());
+    let my_decryption_share = fhe_out.gen_decryption_share(ck);
+    shares.insert(*user_id, my_decryption_share.clone());
+
+    if should_submit_shares {
+        println!("Submitting my decrypting shares");
+        client
+            .submit_decryption_share(*user_id, &my_decryption_share)
+            .await?;
     }
-    println!("Submitting my decrypting shares");
-    client
-        .submit_decryption_shares(*user_id, &my_decryption_shares)
-        .await?;
+
     Ok((fhe_out, shares))
+}
+
+async fn cmd_decryption_submission_completed(
+    client: &WebClient,
+    user_id: &UserId,
+) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    d.print_presentation();
+    Ok(d.is_decryption_shares_submission_complete(*user_id))
 }
 
 async fn cmd_download_shares(
     client: &WebClient,
     names: &[String],
     ck: &ClientKey,
-    shares: &mut HashMap<(usize, usize), Vec<u64>>,
+    shares: &mut DecryptionSharesMap,
     co: &CircuitOutput,
-    user_id: UserId,
     view: &GameStateLocalView,
-) -> Result<Vec<Vec<bool>>, Error> {
+) -> Result<Vec<bool>, Error> {
     let total_users = names.len();
     println!("Acquiring decryption shares needed");
-    for (output_id, user_id) in (0..co.n()).cartesian_product(0..total_users) {
-        if shares.get(&(output_id, user_id)).is_none() {
-            let (_, ds) = client.get_decryption_share(output_id, user_id).await?;
-            shares.insert((output_id, user_id), ds);
+    for user_id in 0..total_users {
+        if shares.get(&user_id).is_none() {
+            let ds = client.get_decryption_share(user_id).await?;
+            shares.insert(user_id, ds);
         }
     }
     println!("Decrypt the encrypted output");
-    let dss = (0..co.n())
-        .map(|output_id| {
-            (0..total_users)
-                .map(|user_id| {
-                    shares
-                        .get(&(output_id, user_id))
-                        .expect("exists")
-                        .to_owned()
-                })
-                .collect_vec()
-        })
+    let dss = (0..total_users)
+        .map(|user_id| shares.get(&user_id).expect("exists").to_owned())
         .collect_vec();
     let decrypted_output = co.decrypt(ck, &dss);
     println!("Final decrypted output: {:?}", decrypted_output);
-    view.print_with_output(&decrypted_output[user_id]);
+    view.print_with_output(&decrypted_output);
     Ok(decrypted_output)
+}
+
+async fn cmd_done(client: &WebClient, user_id: UserId) -> Result<(), Error> {
+    client.done(user_id).await?;
+    Ok(())
 }
 
 async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
@@ -395,80 +460,126 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 Err(err) => Err((err, State::Setup(s))),
             },
             State::ConcludedRegistration(s) => {
-                match cmd_submit_sks(args, &s.client, &s.user_id, &s.names, &s.ck).await {
-                    Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                match cmd_submit_sks(&s.client, &s.ck, &s.user_id).await {
+                    Ok(()) => Ok(State::SubmittedSks(s)),
+                    Err(err) => Err((err, State::ConcludedRegistration(s))),
+                }
+            }
+            State::SubmittedSks(s) => match cmd_check_submit_sks_complete(&s.client).await {
+                Ok(is_complete) => {
+                    if is_complete {
+                        Ok(State::ConcludedSubmitSks(s))
+                    } else {
+                        Ok(State::SubmittedSks(s))
+                    }
+                }
+                Err(err) => Err((err, State::SubmittedSks(s))),
+            },
+            State::ConcludedSubmitSks(s) => {
+                match cmd_init_game(&s.client, &s.ck, s.user_id).await {
+                    Ok(()) => Ok(State::InitGame(StateGame {
                         name: s.name,
                         client: s.client,
                         ck: s.ck,
                         user_id: s.user_id,
                         names: s.names,
-                        view: GameStateLocalView::new(0, 0, 0),
+                        view: GameStateLocalView::new(0, 0, s.user_id),
                     })),
-                    Err(err) => Err((err, State::ConcludedRegistration(s))),
+                    Err(err) => Err((err, State::ConcludedSubmitSks(s))),
                 }
             }
-            State::SubmittedSks(s) => match cmd_run(&s.client).await {
-                Ok(()) => Ok(State::TriggeredRun(StateTriggeredRun {
-                    name: s.name,
-                    client: s.client,
-                    ck: s.ck,
-                    user_id: s.user_id,
-                    names: s.names,
-                    view: s.view,
-                })),
-                Err(err) => Err((err, State::SubmittedSks(s))),
+            State::InitGame(s) => match cmd_setup_game(args, &s.client, &s.ck, s.user_id).await {
+                Ok(view) => Ok(State::SetupGame(StateGame { view, ..s })),
+                Err(err) => Err((err, State::InitGame(s))),
             },
-            State::TriggeredRun(s) => match cmd_download_output(&s.client, &s.user_id, &s.ck).await
-            {
-                Ok((fhe_out, shares)) => Ok(State::DownloadedOutput(StateDownloadedOuput {
-                    name: s.name,
-                    client: s.client,
-                    ck: s.ck,
-                    user_id: s.user_id,
-                    names: s.names,
-                    fhe_out,
-                    shares,
-                    view: s.view,
-                })),
-                Err(err) => Err((err, State::TriggeredRun(s))),
+            State::SetupGame(s) => match cmd_setup_game_complete(&s.client).await {
+                Ok(is_complete) => {
+                    if is_complete {
+                        Ok(State::ConcludedSetupGame(s))
+                    } else {
+                        Ok(State::SetupGame(s))
+                    }
+                }
+                Err(err) => Err((err, State::SetupGame(s))),
             },
-            State::DownloadedOutput(mut s) => {
+            State::ConcludedSetupGame(s) => Ok(State::ConcludedSetupGame(s)),
+            State::GameAction(s) => match cmd_fhe_complete(&s.client).await {
+                Ok(is_complete) => {
+                    if is_complete {
+                        Ok(State::CompletedFhe(s))
+                    } else {
+                        Ok(State::GameAction(s))
+                    }
+                }
+                Err(err) => Err((err, State::GameAction(s))),
+            },
+            State::CompletedFhe(s) => {
+                match cmd_download_output(&s.client, &s.user_id, &s.ck, !s.is_my_action).await {
+                    Ok((fhe_out, shares)) => Ok(State::DownloadedOutput(StateDownloadedOutput {
+                        name: s.name,
+                        client: s.client,
+                        ck: s.ck,
+                        user_id: s.user_id,
+                        names: s.names,
+                        fhe_out,
+                        shares,
+                        view: s.view,
+                        is_my_action: s.is_my_action,
+                    })),
+                    Err(err) => Err((err, State::CompletedFhe(s))),
+                }
+            }
+            State::DownloadedOutput(s) => {
+                if !s.is_my_action {
+                    return Ok(State::Decrypted(StateDecrypted {
+                        name: s.name,
+                        client: s.client,
+                        ck: s.ck,
+                        user_id: s.user_id,
+                        names: s.names,
+                        view: s.view,
+                        decrypted_output: None,
+                        is_my_action: false,
+                    }));
+                }
+                match cmd_decryption_submission_completed(&s.client, &s.user_id).await {
+                    Ok(is_complete) => {
+                        if is_complete {
+                            Ok(State::ConcludedDecryptionSubmission(s))
+                        } else {
+                            Ok(State::DownloadedOutput(s))
+                        }
+                    }
+                    Err(err) => Err((err, State::DownloadedOutput(s))),
+                }
+            }
+
+            State::ConcludedDecryptionSubmission(mut s) => {
                 match cmd_download_shares(
                     &s.client,
                     &s.names,
                     &s.ck,
                     &mut s.shares,
                     &s.fhe_out,
-                    s.user_id,
                     &s.view,
                 )
                 .await
                 {
                     Ok(decrypted_output) => Ok(State::Decrypted(StateDecrypted {
-                        names: s.names,
+                        name: s.name,
                         client: s.client,
-                        decrypted_output,
+                        ck: s.ck,
+                        user_id: s.user_id,
+                        names: s.names,
+                        decrypted_output: Some(decrypted_output),
                         view: s.view,
+                        is_my_action: true,
                     })),
                     Err(err) => Err((err, State::DownloadedOutput(s))),
                 }
             }
-            State::Decrypted(StateDecrypted {
-                names,
-                client,
-                decrypted_output,
-                view,
-            }) => Ok(State::Decrypted(StateDecrypted {
-                names,
-                client,
-                decrypted_output,
-                view,
-            })),
-        }
-    } else if cmd == &"init" {
-        match state {
-            State::SubmittedSks(s) => match cmd_init(&s.client, &s.ck, s.user_id).await {
-                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+            State::Decrypted(s) => match cmd_done(&s.client, s.user_id).await {
+                Ok(()) => Ok(State::NewRound(StateGame {
                     name: s.name,
                     client: s.client,
                     ck: s.ck,
@@ -476,85 +587,132 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     names: s.names,
                     view: s.view,
                 })),
-                Err(err) => Err((err, State::SubmittedSks(s))),
+                Err(err) => Err((err, State::Decrypted(s))),
             },
-            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-        }
-    } else if cmd == &"setup_game" {
-        match state {
-            State::SubmittedSks(s) => match cmd_setup_game(args, &s.client, &s.ck, s.user_id).await
-            {
-                Ok(view) => Ok(State::SubmittedSks(SubmittedSks {
-                    name: s.name,
-                    client: s.client,
-                    ck: s.ck,
-                    user_id: s.user_id,
-                    names: s.names,
-                    view,
-                })),
-                Err(err) => Err((err, State::SubmittedSks(s))),
-            },
-            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+            State::NewRound(s) => Ok(State::ConcludedSetupGame(s)),
         }
     } else if cmd == &"move" {
         match state {
-            State::SubmittedSks(s) => {
+            State::ConcludedSetupGame(s) => {
                 match cmd_move(args, &s.client, &s.ck, s.user_id, &s.view).await {
-                    Ok(view) => Ok(State::SubmittedSks(SubmittedSks {
+                    Ok(view) => Ok(State::GameAction(StateGameAction {
+                        view,
+                        is_my_action: true,
                         name: s.name,
                         client: s.client,
                         ck: s.ck,
                         user_id: s.user_id,
                         names: s.names,
-                        view,
                     })),
-                    Err(err) => Err((err, State::SubmittedSks(s))),
+                    Err(err) => {
+                        if err.to_string().contains("Wrong server state") {
+                            let result = match cmd_fhe_ongoing(&s.client).await {
+                                Ok(is_ongoing) => {
+                                    if is_ongoing {
+                                        println!("❌ Your action DID NOT take effect!");
+                                        println!("❗ Another player took an action first. Let's decrypt their output first.");
+                                        Ok(State::GameAction(StateGameAction {
+                                            is_my_action: false,
+                                            name: s.name,
+                                            client: s.client,
+                                            ck: s.ck,
+                                            user_id: s.user_id,
+                                            names: s.names,
+                                            view: s.view,
+                                        }))
+                                    } else {
+                                        Err((err, State::ConcludedSetupGame(s)))
+                                    }
+                                }
+                                Err(err) => Err((err, State::ConcludedSetupGame(s))),
+                            };
+                            return result;
+                        }
+                        Err((err, State::ConcludedSetupGame(s)))
+                    }
                 }
             }
             _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
         }
     } else if cmd == &"lay" {
         match state {
-            State::SubmittedSks(s) => match cmd_lay(&s.client, s.user_id, &s.view).await {
-                Ok(view) => Ok(State::SubmittedSks(SubmittedSks {
+            State::ConcludedSetupGame(s) => match cmd_lay(&s.client, s.user_id, &s.view).await {
+                Ok(view) => Ok(State::GameAction(StateGameAction {
+                    view,
+                    is_my_action: true,
                     name: s.name,
                     client: s.client,
                     ck: s.ck,
                     user_id: s.user_id,
                     names: s.names,
-                    view,
                 })),
-                Err(err) => Err((err, State::SubmittedSks(s))),
+                Err(err) => {
+                    if err.to_string().contains("Wrong server state") {
+                        let result = match cmd_fhe_ongoing(&s.client).await {
+                            Ok(is_ongoing) => {
+                                if is_ongoing {
+                                    println!("❌ Your action DID NOT take effect!");
+                                    println!("❗ Another player took an action first. Let's decrypt their output first.");
+                                    Ok(State::GameAction(StateGameAction {
+                                        is_my_action: false,
+                                        name: s.name,
+                                        client: s.client,
+                                        ck: s.ck,
+                                        user_id: s.user_id,
+                                        names: s.names,
+                                        view: s.view,
+                                    }))
+                                } else {
+                                    Err((err, State::ConcludedSetupGame(s)))
+                                }
+                            }
+                            Err(err) => Err((err, State::ConcludedSetupGame(s))),
+                        };
+                        return result;
+                    }
+                    Err((err, State::ConcludedSetupGame(s)))
+                }
             },
             _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
         }
     } else if cmd == &"pickup" {
         match state {
-            State::SubmittedSks(s) => match cmd_pickup(&s.client, s.user_id, &s.view).await {
-                Ok(view) => Ok(State::SubmittedSks(SubmittedSks {
-                    name: s.name,
-                    client: s.client,
-                    ck: s.ck,
-                    user_id: s.user_id,
-                    names: s.names,
+            State::ConcludedSetupGame(s) => match cmd_pickup(&s.client, s.user_id, &s.view).await {
+                Ok(view) => Ok(State::GameAction(StateGameAction {
                     view,
-                })),
-                Err(err) => Err((err, State::SubmittedSks(s))),
-            },
-            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-        }
-    } else if cmd == &"done" {
-        match state {
-            State::SubmittedSks(s) => match cmd_done(&s.client, s.user_id).await {
-                Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
+                    is_my_action: true,
                     name: s.name,
                     client: s.client,
                     ck: s.ck,
                     user_id: s.user_id,
                     names: s.names,
-                    view: s.view,
                 })),
-                Err(err) => Err((err, State::SubmittedSks(s))),
+                Err(err) => {
+                    if err.to_string().contains("Wrong server state") {
+                        let result = match cmd_fhe_ongoing(&s.client).await {
+                            Ok(is_ongoing) => {
+                                if is_ongoing {
+                                    println!("❌ Your action DID NOT take effect!");
+                                    println!("❗ Another player took an action first. Let's decrypt their output first.");
+                                    Ok(State::GameAction(StateGameAction {
+                                        is_my_action: false,
+                                        name: s.name,
+                                        client: s.client,
+                                        ck: s.ck,
+                                        user_id: s.user_id,
+                                        names: s.names,
+                                        view: s.view,
+                                    }))
+                                } else {
+                                    Err((err, State::ConcludedSetupGame(s)))
+                                }
+                            }
+                            Err(err) => Err((err, State::ConcludedSetupGame(s))),
+                        };
+                        return result;
+                    }
+                    Err((err, State::ConcludedSetupGame(s)))
+                }
             },
             _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
         }
@@ -563,9 +721,16 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             State::Init(StateInit { client, .. })
             | State::Setup(StateSetup { client, .. })
             | State::ConcludedRegistration(Registration { client, .. })
-            | State::SubmittedSks(SubmittedSks { client, .. })
-            | State::TriggeredRun(StateTriggeredRun { client, .. })
-            | State::DownloadedOutput(StateDownloadedOuput { client, .. })
+            | State::SubmittedSks(Registration { client, .. })
+            | State::ConcludedSubmitSks(Registration { client, .. })
+            | State::InitGame(StateGame { client, .. })
+            | State::SetupGame(StateGame { client, .. })
+            | State::ConcludedSetupGame(StateGame { client, .. })
+            | State::GameAction(StateGameAction { client, .. })
+            | State::CompletedFhe(StateGameAction { client, .. })
+            | State::DownloadedOutput(StateDownloadedOutput { client, .. })
+            | State::ConcludedDecryptionSubmission(StateDownloadedOutput { client, .. })
+            | State::NewRound(StateGame { client, .. })
             | State::Decrypted(StateDecrypted { client, .. }) => {
                 match client.get_dashboard().await {
                     Ok(dashbaord) => {
@@ -581,21 +746,4 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
     } else {
         Err((anyhow!("Unknown command {}", cmd), state))
     }
-}
-
-fn present_balance(names: &[String], scores: &[Score], final_balances: &[Score]) {
-    #[derive(Tabled)]
-    struct Row {
-        name: String,
-        karma_i_sent: Score,
-        decrypted_karma_balance: Score,
-    }
-    let table = zip(zip(names, scores), final_balances)
-        .map(|((name, &karma_i_sent), &decrypted_karma_balance)| Row {
-            name: name.to_string(),
-            karma_i_sent,
-            decrypted_karma_balance,
-        })
-        .collect_vec();
-    println!("{}", Table::new(table).with(Style::ascii_rounded()));
 }

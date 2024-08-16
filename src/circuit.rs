@@ -31,22 +31,6 @@ pub(crate) fn evaluate_circuit(
     state
 }
 
-pub(crate) fn get_cells(state: &GameStateEnc, num_user: usize) -> Vec<Word> {
-    let coords = state.coords.iter().flatten().cloned().collect_vec();
-    assert_eq!(coords.len(), 4, "We should have 4 users here");
-    (0..num_user)
-        .map(|user_id| {
-            println!("Get cell for user {}", user_id);
-            set_parameter_set(PARAMETER);
-            get_cell(
-                &coords[user_id],
-                &state.eggs,
-                &coords.iter().flatten().cloned().collect_vec(),
-            )
-        })
-        .collect_vec()
-}
-
 pub(crate) fn apply_action(
     state: GameStateEnc,
     user_id: UserId,
@@ -76,4 +60,15 @@ pub(crate) fn apply_action(
         }
     };
     next_state
+}
+
+pub(crate) fn get_user_cell(state: &GameStateEnc, user_id: UserId) -> Word {
+    println!("Get cell for user {}", user_id);
+    set_parameter_set(PARAMETER);
+    let coords = state.coords.iter().flatten().cloned().collect_vec();
+    get_cell(
+        &coords[user_id],
+        &state.eggs,
+        &coords.iter().flatten().cloned().collect_vec(),
+    )
 }

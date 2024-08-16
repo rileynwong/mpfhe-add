@@ -1,14 +1,12 @@
 use crate::circuit::PARAMETER;
 use crate::dashboard::{Dashboard, RegisteredUser};
 use itertools::Itertools;
-use phantom_zone::set_parameter_set;
 use phantom_zone::{
     evaluator::NonInteractiveMultiPartyCrs,
     keys::CommonReferenceSeededNonInteractiveMultiPartyServerKeyShare, parameters::BoolParameters,
-    Encryptor, FheBool, KeySwitchWithId, MultiPartyDecryptor, NonInteractiveSeededFheBools,
-    SampleExtractor,
+    set_parameter_set, Encryptor, FheBool, KeySwitchWithId, MultiPartyDecryptor,
+    NonInteractiveSeededFheBools, SampleExtractor,
 };
-use rayon::vec;
 use rocket::serde::{Deserialize, Serialize};
 use rocket::tokio::sync::Mutex;
 use rocket::Responder;
@@ -19,10 +17,6 @@ use std::sync::Arc;
 use tabled::Table;
 use thiserror::Error;
 
-pub type Score = i16;
-/// It is here for the build
-type PlainWord = i16;
-
 pub type ClientKey = phantom_zone::ClientKey;
 pub type UserId = usize;
 
@@ -32,17 +26,14 @@ pub(crate) type ServerKeyShare = CommonReferenceSeededNonInteractiveMultiPartySe
     BoolParameters<u64>,
     NonInteractiveMultiPartyCrs<Seed>,
 >;
+
 pub type Word = Vec<FheBool>;
-pub(crate) type CircuitInput = Vec<Word>;
+pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
+
 /// Decryption share for a word from one user.
 pub type DecryptionShare = Vec<u64>;
 
-/// Decryption share with output id
-pub type AnnotatedDecryptionShare = (usize, DecryptionShare);
-
-pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
-
-pub const BOARD_DIM: usize = 4; // board size is BOARD_DIM * BOARD_DIM
+pub const BOARD_DIM: usize = 4;
 pub const BOARD_SIZE: usize = BOARD_DIM * BOARD_DIM;
 
 #[derive(Copy, Clone)]
@@ -84,29 +75,31 @@ fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
 pub struct GameStateLocalView {
     user_id: UserId,
     my_coord: (u8, u8),
-    eggs_laid: Vec<bool>,
+    eggs_laid: Vec<Vec<bool>>,
 }
 
 impl GameStateLocalView {
+    // x is the row index, y is the column index
     pub fn new(x: u8, y: u8, user_id: UserId) -> Self {
         Self {
             user_id,
             my_coord: (x, y),
-            eggs_laid: vec![false; BOARD_SIZE],
+            eggs_laid: vec![vec![false; BOARD_DIM]; BOARD_DIM],
         }
     }
+
     pub fn move_player(&mut self, dir: Direction) {
         let (x, y) = &mut self.my_coord;
         match dir {
-            Direction::Up => *y = y.wrapping_add(1),
-            Direction::Down => *y = y.wrapping_sub(1),
-            Direction::Left => *x = x.wrapping_sub(1),
-            Direction::Right => *x = x.wrapping_add(1),
+            Direction::Up => *x = (*x - 1 + BOARD_DIM as u8) % BOARD_DIM as u8,
+            Direction::Down => *x = (*x + 1) % BOARD_DIM as u8,
+            Direction::Left => *y = (*y - 1 + BOARD_DIM as u8) % BOARD_DIM as u8,
+            Direction::Right => *y = (*y + 1) % BOARD_DIM as u8,
         }
     }
     pub fn get_egg(&mut self) -> &mut bool {
         let (x, y) = self.my_coord;
-        &mut self.eggs_laid[BOARD_DIM * (BOARD_DIM - 1 - (y as usize)) + (x as usize)]
+        &mut self.eggs_laid[x as usize][y as usize]
     }
 
     pub fn lay(&mut self) {
@@ -117,8 +110,12 @@ impl GameStateLocalView {
         *self.get_egg() = false;
     }
 
+    // for row, 0 index starts from the top
+    // for column, 0 index starts from the left
     pub fn print(&self) {
-        println!("My coordination {:?}", self.my_coord);
+        println!("----------------Local View-------------------");
+        println!("My coordinates {:?}", self.my_coord);
+
         let mut data = vec![];
         for _ in 0..BOARD_DIM {
             let cells = (0..BOARD_DIM).map(|_| "_".to_string()).collect_vec();
@@ -126,16 +123,14 @@ impl GameStateLocalView {
         }
 
         let (my_x, my_y) = self.my_coord;
-        data[BOARD_DIM - 1 - my_y as usize][my_x as usize] =
-            format!("(🐓{})", self.user_id).to_string();
+        data[my_x as usize][my_y as usize] = format!("(🐓{})", self.user_id).to_string();
+
         for x in 0..BOARD_DIM {
             for y in 0..BOARD_DIM {
-                if self.eggs_laid[BOARD_DIM * (BOARD_DIM - 1 - (y as usize)) + (x as usize)] == true
-                {
-                    data[BOARD_DIM - 1 - y][x] =
-                        [data[BOARD_DIM - 1 - y][x].to_string(), "🥚".to_string()]
-                            .join("")
-                            .to_string();
+                if self.eggs_laid[x][y] {
+                    data[x][y] = [data[x][y].to_string(), "🥚".to_string()]
+                        .join("")
+                        .to_string();
                 }
             }
         }
@@ -143,80 +138,37 @@ impl GameStateLocalView {
     }
 
     pub fn print_with_output(&self, output: &[bool]) {
-        println!("My coordination {:?}", self.my_coord);
+        println!("----------------Global View-------------------");
+        println!("(Only my cell is decrypted)");
+        println!("My coordinates {:?}", self.my_coord);
+
         let mut data = vec![];
         for _ in 0..BOARD_DIM {
             let cells = (0..BOARD_DIM).map(|_| "🌫️".to_string()).collect_vec();
             data.push(cells)
         }
+
         let (my_x, my_y) = self.my_coord;
-        let y = BOARD_DIM - 1 - my_y as usize;
-        let x = my_x as usize;
-        data[y][x] = "".to_string();
+        let (x, y) = (my_x as usize, my_y as usize);
+        data[x][y] = "".to_string();
+
         for user in 0..4 {
-            if output[user] == true {
-                data[y][x] = [data[y][x].to_string(), format!("(🐓{})", user).to_string()].concat()
+            if output[user] {
+                data[x][y] = [data[x][y].to_string(), format!("(🐓{})", user).to_string()].concat()
             }
         }
-        if output[4] == true {
-            data[y][x] = [data[y][x].to_string(), "🥚".to_string()].concat()
+        if output[4] {
+            data[x][y] = [data[x][y].to_string(), "🥚".to_string()].concat()
         }
 
         println!("{}", Table::from_iter(data).to_string());
     }
 }
 
-pub struct GameState {
-    /// Player's coordinations. Example: vec![(0u8, 0u8), (2u8, 0u8), (1u8, 1u8), (1u8, 1u8)]
-    coords: Vec<PlainCoord>,
-    /// example: [false; BOARD_SIZE];
-    eggs: Vec<bool>,
-}
-
 #[derive(Debug, Clone)]
 pub struct GameStateEnc {
     pub coords: Vec<Option<Word>>,
     pub eggs: Word,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(crate = "rocket::serde")]
-pub struct PlainCoord {
-    pub x: u8,
-    pub y: u8,
-}
-
-impl PlainCoord {
-    pub fn new(x: u8, y: u8) -> PlainCoord {
-        PlainCoord { x: x, y: y }
-    }
-
-    pub fn from_binnary<const N: usize>(coords: &[bool]) -> PlainCoord {
-        let mut x = 0u8;
-        let mut y = 0u8;
-        for i in (0..N / 2).rev() {
-            x = (x << 1) + coords[i] as u8;
-        }
-        for i in (N / 2..N).rev() {
-            y = (y << 1) + coords[i] as u8;
-        }
-        return PlainCoord { x: x, y: y };
-    }
-
-    pub fn to_binary<const N: usize>(&self) -> [bool; N] {
-        let mut result = [false; N];
-        for i in 0..N / 2 {
-            if (self.x >> i) & 1 == 1 {
-                result[i] = true;
-            }
-        }
-        for i in N / 2..N {
-            if (self.y >> i) & 1 == 1 {
-                result[i] = true;
-            }
-        }
-        result
-    }
 }
 
 /// Encrypted input words contributed from one user
@@ -248,9 +200,6 @@ impl<T> Display for UserAction<T> {
 }
 
 impl UserAction<EncryptedWord> {
-    pub fn from_plain(ck: &ClientKey, karma: &[PlainWord]) -> Self {
-        todo!();
-    }
     pub fn init_game(ck: &ClientKey, initial_eggs: &[bool]) -> Self {
         let initial_eggs = ck.encrypt(initial_eggs);
         Self::InitGame { initial_eggs }
@@ -290,10 +239,6 @@ impl UserAction<EncryptedWord> {
     }
 }
 
-pub fn encrypt_plain(ck: &ClientKey, plain: &[bool]) -> EncryptedWord {
-    ck.encrypt(plain)
-}
-
 fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
     word.unseed::<Vec<Vec<u64>>>()
         .key_switch(user_id)
@@ -302,61 +247,37 @@ fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitOutput {
-    /// Computed karma balance of all users
-    cells: Vec<Word>,
+    cell: Word,
 }
 
 impl CircuitOutput {
-    pub(crate) fn new(cells: Vec<Word>) -> Self {
-        Self { cells }
+    pub(crate) fn new(cell: Word) -> Self {
+        Self { cell }
     }
 
-    /// For each output word, a user generates its decryption share
-    pub fn gen_decryption_shares(&self, ck: &ClientKey) -> Vec<AnnotatedDecryptionShare> {
-        self.cells
+    pub fn gen_decryption_share(&self, ck: &ClientKey) -> DecryptionShare {
+        let dec_share = self
+            .cell
+            .iter()
+            .map(|out_bit| ck.gen_decryption_share(out_bit))
+            .collect_vec();
+        dec_share
+    }
+
+    pub fn decrypt(&self, ck: &ClientKey, dss: &[DecryptionShare]) -> Vec<bool> {
+        // A DecryptionShare is user i's contribution to word j.
+        // To decrypt word j at bit position k. We need to extract the position k of user i's share.
+        let decrypted_bits = self
+            .cell
             .iter()
             .enumerate()
-            .map(|(cell_id, word)| (cell_id, gen_decryption_shares(ck, word)))
-            .collect_vec()
+            .map(|(bit_k, fhe_bit)| {
+                let shares_for_bit_k = dss.iter().map(|user_share| user_share[bit_k]).collect_vec();
+                ck.aggregate_decryption_shares(fhe_bit, &shares_for_bit_k)
+            })
+            .collect_vec();
+        decrypted_bits
     }
-
-    pub fn decrypt(&self, ck: &ClientKey, dss: &[Vec<DecryptionShare>]) -> Vec<Vec<bool>> {
-        self.cells
-            .iter()
-            .zip_eq(dss)
-            .map(|(word, shares)| decrypt_word(ck, word, shares))
-            .collect_vec()
-    }
-
-    /// Get number of outputs
-    pub fn n(&self) -> usize {
-        self.cells.len()
-    }
-}
-
-pub fn gen_decryption_shares(ck: &ClientKey, fhe_output: &Word) -> DecryptionShare {
-    let dec_shares = fhe_output
-        .iter()
-        .map(|out_bit| ck.gen_decryption_share(out_bit))
-        .collect_vec();
-    dec_shares
-}
-
-fn decrypt_word(ck: &ClientKey, fhe_output: &Word, shares: &[DecryptionShare]) -> Vec<bool> {
-    // A DecryptionShare is user i's contribution to word j.
-    // To decrypt word j at bit position k. We need to extract the position k of user i's share.
-    let decrypted_bits = fhe_output
-        .iter()
-        .enumerate()
-        .map(|(bit_k, fhe_bit)| {
-            let shares_for_bit_k = shares
-                .iter()
-                .map(|user_share| user_share[bit_k])
-                .collect_vec();
-            ck.aggregate_decryption_shares(fhe_bit, &shares_for_bit_k)
-        })
-        .collect_vec();
-    decrypted_bits
 }
 
 #[derive(Debug, Error)]
@@ -367,8 +288,8 @@ pub(crate) enum Error {
     UnregisteredUser { user_id: usize },
     #[error("The ciphertext from user #{user_id} not found")]
     CipherNotFound { user_id: UserId },
-    #[error("Decryption share of {output_id} from user {user_id} not found")]
-    DecryptionShareNotFound { output_id: usize, user_id: UserId },
+    #[error("Decryption share from user {user_id} not found")]
+    DecryptionShareNotFound { user_id: UserId },
     /// Temporary here
     #[error("Output not ready")]
     OutputNotReady,
@@ -404,9 +325,11 @@ impl From<Error> for ErrorResponse {
 pub enum ServerState {
     /// Users are allowed to join the computation
     ReadyForJoining,
-    /// The number of user is determined now.
-    /// We can now accept ciphertexts, which depends on the number of users.
-    ReadyForInputs,
+    /// We can now accept server key shares
+    ReadyForServerKeyShares,
+    /// We can now accept starting coordinates
+    ReadyForSetupGame,
+    ReadyForActions,
     ReadyForRunning,
     RunningFhe,
     CompletedFhe,
@@ -423,6 +346,7 @@ impl ServerState {
             })
         }
     }
+
     fn transit(&mut self, next: Self) {
         *self = next;
     }
@@ -444,7 +368,8 @@ pub(crate) struct ServerStorage {
 
     pub(crate) game_state: Option<GameStateEnc>,
     pub(crate) action_queue: Vec<(UserId, UserAction<Word>)>,
-    pub(crate) cells: Option<CircuitOutput>,
+    // in this case it is the users' cells
+    pub(crate) circuit_output: Option<CircuitOutput>,
 }
 
 impl ServerStorage {
@@ -456,7 +381,7 @@ impl ServerStorage {
 
             game_state: None,
             action_queue: vec![],
-            cells: None,
+            circuit_output: None,
         }
     }
 
@@ -466,6 +391,7 @@ impl ServerStorage {
             id: user_id,
             name: name.to_string(),
             storage: UserStorage::Empty,
+            ready_for_new_round: false,
         });
         RegisteredUser::new(user_id, name)
     }
@@ -492,12 +418,21 @@ impl ServerStorage {
             .all(|user| matches!(user.storage, UserStorage::Sks(..)))
     }
 
+    pub(crate) fn check_setup_game_complete(&self) -> bool {
+        self.users
+            .iter()
+            .all(|user| matches!(user.storage, UserStorage::StartingCoords))
+    }
+
+    pub(crate) fn check_ready_for_new_round(&self) -> bool {
+        self.users.iter().all(|user| user.ready_for_new_round)
+    }
+
     pub(crate) fn get_sks(&mut self) -> Result<Vec<ServerKeyShare>, Error> {
         let mut server_key_shares = vec![];
         for (user_id, user) in self.users.iter_mut().enumerate() {
             if let Some(sks) = user.storage.get_cipher_sks() {
                 server_key_shares.push(sks.clone());
-                user.storage = UserStorage::DecryptionShare(None);
             } else {
                 return Err(Error::CipherNotFound { user_id });
             }
@@ -515,13 +450,15 @@ pub(crate) struct UserRecord {
     pub(crate) id: UserId,
     pub(crate) name: String,
     pub(crate) storage: UserStorage,
+    pub(crate) ready_for_new_round: bool,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum UserStorage {
     Empty,
     Sks(Box<ServerKeyShare>),
-    DecryptionShare(Option<Vec<AnnotatedDecryptionShare>>),
+    StartingCoords,
+    DecryptionShare(Option<DecryptionShare>),
 }
 
 impl UserStorage {
@@ -532,9 +469,7 @@ impl UserStorage {
         }
     }
 
-    pub(crate) fn get_mut_decryption_shares(
-        &mut self,
-    ) -> Option<&mut Option<Vec<AnnotatedDecryptionShare>>> {
+    pub(crate) fn get_mut_decryption_share(&mut self) -> Option<&mut Option<DecryptionShare>> {
         match self {
             Self::DecryptionShare(ds) => Some(ds),
             _ => None,
@@ -543,7 +478,7 @@ impl UserStorage {
 }
 
 /// ([`Word`] index, user_id) -> decryption share
-pub type DecryptionSharesMap = HashMap<(usize, UserId), DecryptionShare>;
+pub type DecryptionSharesMap = HashMap<UserId, DecryptionShare>;
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
@@ -556,25 +491,5 @@ pub(crate) struct SksSubmission {
 #[serde(crate = "rocket::serde")]
 pub(crate) struct DecryptionShareSubmission {
     pub(crate) user_id: UserId,
-    /// The user sends decryption share for each [`Word`].
-    pub(crate) decryption_shares: Vec<AnnotatedDecryptionShare>,
-}
-
-pub fn u64_to_binary<const N: usize>(v: u64) -> [bool; N] {
-    assert!((v as u128) < 2u128.pow(N as u32));
-    let mut result = [false; N];
-    for (i, bit) in result.iter_mut().enumerate() {
-        if (v >> i) & 1 == 1 {
-            *bit = true;
-        }
-    }
-    result
-}
-
-pub fn recover(bits: &[bool]) -> u16 {
-    let mut out = 0;
-    for (i, bit) in bits.iter().enumerate() {
-        out |= (*bit as u16) << i;
-    }
-    out
+    pub(crate) decryption_share: DecryptionShare,
 }

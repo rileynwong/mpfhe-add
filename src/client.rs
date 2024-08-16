@@ -2,9 +2,9 @@ use crate::{
     dashboard::{Dashboard, RegisteredUser},
     types::{
         CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Seed,
-        ServerKeyShare, ServerState, SksSubmission, UserAction, UserId, Word,
+        ServerKeyShare, ServerState, SksSubmission, UserAction, UserId,
     },
-    AnnotatedDecryptionShare, ClientKey, Direction,
+    ClientKey, Direction,
 };
 use anyhow::{anyhow, bail, Error};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -140,6 +140,15 @@ impl WebClient {
         self.post_msgpack("/submit_sks", &submission).await
     }
 
+    async fn setup_game(
+        &self,
+        user_id: UserId,
+        action: &UserAction<EncryptedWord>,
+    ) -> Result<UserId, Error> {
+        self.post_msgpack(&format!("/setup_game/{user_id}"), action)
+            .await
+    }
+
     async fn request_action(
         &self,
         user_id: UserId,
@@ -149,7 +158,6 @@ impl WebClient {
             .await
     }
 
-    /// This function can only be called by user 0
     pub async fn init_game(
         &self,
         ck: &ClientKey,
@@ -157,7 +165,7 @@ impl WebClient {
         initial_eggs: &[bool],
     ) -> Result<UserId, Error> {
         let action = UserAction::init_game(ck, initial_eggs);
-        self.request_action(user_id, &action).await
+        self.setup_game(user_id, &action).await
     }
 
     pub async fn set_starting_coords(
@@ -167,11 +175,8 @@ impl WebClient {
         starting_coords: &(u8, u8),
     ) -> Result<UserId, Error> {
         let action = UserAction::set_starting_coord(ck, starting_coords);
-        self.request_action(user_id, &action).await
+        self.setup_game(user_id, &action).await
     }
-
-    // Each round, client can submiit one of the 3 actions
-    // Action include (move_player, lay_egg, pickup_egg)
 
     pub async fn move_player(
         &self,
@@ -191,52 +196,39 @@ impl WebClient {
         self.request_action(user_id, &UserAction::PickupEgg).await
     }
 
+    // `done` should be called after decrypted the output, and want to start a new
     pub async fn done(&self, user_id: UserId) -> Result<UserId, Error> {
-        self.request_action(user_id, &UserAction::Done).await
+        let action: &UserAction<EncryptedWord> = &UserAction::Done;
+        self.post_msgpack(&format!("/done/{user_id}"), action).await
     }
 
-    /// After the actions submitted from all users,
-    /// they can call get_cell
     pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {
         self.request_action(user_id, &UserAction::GetCell).await
     }
 
-    // After get_cell, need to decrypt the result
-    // user i should be the last person to decrypt the result for his get_cell
-
-    // Server state
-    // Round start (each user can submiit one action)
-    // GetCell (each user can call get cell)
-    // DecryptResult (decrypt each user's result)
-
-    pub async fn trigger_fhe_run(&self) -> Result<ServerState, Error> {
-        self.post_nobody("/run").await
+    pub async fn trigger_fhe_run(&self, user_id: usize) -> Result<ServerState, Error> {
+        self.post_nobody(&format!("/run/{user_id}")).await
     }
 
     pub async fn get_fhe_output(&self) -> Result<CircuitOutput, Error> {
         self.get("/fhe_output").await
     }
 
-    pub async fn submit_decryption_shares(
+    pub async fn submit_decryption_share(
         &self,
         user_id: usize,
-        decryption_shares: &[AnnotatedDecryptionShare],
+        decryption_share: &DecryptionShare,
     ) -> Result<UserId, Error> {
         let submission = DecryptionShareSubmission {
             user_id,
-            decryption_shares: decryption_shares.to_vec(),
+            decryption_share: decryption_share.clone(),
         };
-        self.post_msgpack("/submit_decryption_shares", &submission)
+        self.post_msgpack("/submit_decryption_share", &submission)
             .await
     }
 
-    pub async fn get_decryption_share(
-        &self,
-        output_id: usize,
-        user_id: usize,
-    ) -> Result<AnnotatedDecryptionShare, Error> {
-        self.get(&format!("/decryption_share/{output_id}/{user_id}"))
-            .await
+    pub async fn get_decryption_share(&self, user_id: usize) -> Result<DecryptionShare, Error> {
+        self.get(&format!("/decryption_share/{user_id}")).await
     }
 }
 

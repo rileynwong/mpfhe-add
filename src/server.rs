@@ -1,4 +1,4 @@
-use crate::circuit::{derive_server_key, evaluate_circuit, get_cells, PARAMETER};
+use crate::circuit::{derive_server_key, evaluate_circuit, get_user_cell, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
 
 use crate::types::{
@@ -6,7 +6,7 @@ use crate::types::{
     GameStateEnc, MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId,
     UserStorage,
 };
-use crate::{AnnotatedDecryptionShare, UserAction, Word};
+use crate::UserAction;
 use phantom_zone::{set_common_reference_seed, set_parameter_set};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
@@ -34,8 +34,7 @@ async fn register(
     println!("{name} just joined!");
 
     if ss.users.len() == 4 {
-        ss.ensure(ServerState::ReadyForJoining)?;
-        ss.transit(ServerState::ReadyForInputs);
+        ss.transit(ServerState::ReadyForServerKeyShares);
         println!("Got 4 players. Registration closed!");
     }
 
@@ -48,7 +47,7 @@ async fn get_dashboard(ss: &State<MutexServerStorage>) -> Json<Dashboard> {
     Json(dashboard)
 }
 
-/// The user submits Server key shares
+/// The user submits server key shares
 #[post("/submit_sks", data = "<submission>", format = "msgpack")]
 async fn submit_sks(
     submission: MsgPack<SksSubmission>,
@@ -56,16 +55,16 @@ async fn submit_sks(
 ) -> Result<Json<UserId>, ErrorResponse> {
     let mut ss = ss.lock().await;
 
-    ss.ensure(ServerState::ReadyForInputs)?;
+    ss.ensure(ServerState::ReadyForServerKeyShares)?;
 
     let SksSubmission { user_id, sks } = submission.0;
 
     let user = ss.get_user(user_id)?;
-    println!("{} submited data", user.name);
+    println!("{} submited server key share.", user.name);
     user.storage = UserStorage::Sks(Box::new(sks));
 
     if ss.check_cipher_submission() {
-        ss.transit(ServerState::ReadyForInputs);
+        ss.transit(ServerState::ReadyForSetupGame);
         let server_key_shares = ss.get_sks()?;
         set_parameter_set(PARAMETER);
         // Long running, global variable change
@@ -75,20 +74,21 @@ async fn submit_sks(
     Ok(Json(user_id))
 }
 
-#[post("/request_action/<user_id>", data = "<action>", format = "msgpack")]
-async fn request_action(
+#[post("/setup_game/<user_id>", data = "<action>", format = "msgpack")]
+async fn setup_game(
     user_id: UserId,
     action: MsgPack<UserAction<EncryptedWord>>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let mut ss = ss.lock().await;
 
-    ss.ensure(ServerState::ReadyForInputs)?;
+    ss.ensure(ServerState::ReadyForSetupGame)?;
 
     let user = ss.get_user(user_id)?;
-    println!("{} performed {}", user.name, action.to_string());
+    println!("{} requested action {}", user.name, action.to_string());
     let action = action.unpack(user_id);
-    match action {
+
+    let result = match action {
         UserAction::InitGame { initial_eggs } => {
             match &mut ss.game_state {
                 Some(game_state) => game_state.eggs = initial_eggs,
@@ -99,8 +99,10 @@ async fn request_action(
                     })
                 }
             };
+            Ok(Json(user_id))
         }
         UserAction::SetStartingCoord { starting_coord } => {
+            user.storage = UserStorage::StartingCoords;
             match &mut ss.game_state {
                 Some(game_state) => game_state.coords[user_id] = Some(starting_coord),
                 None => {
@@ -112,20 +114,99 @@ async fn request_action(
                     });
                 }
             };
+            if ss.check_setup_game_complete() {
+                ss.transit(ServerState::ReadyForActions);
+                for user in ss.users.iter_mut() {
+                    user.storage = UserStorage::DecryptionShare(None);
+                }
+            }
+            Ok(Json(user_id))
         }
+        _ => Err(Error::WrongServerState {
+            expect: ServerState::ReadyForSetupGame.to_string(),
+            got: ss.state.to_string(),
+        }
+        .into()),
+    };
+
+    result
+}
+
+#[post("/request_action/<user_id>", data = "<action>", format = "msgpack")]
+async fn request_action(
+    user_id: UserId,
+    action: MsgPack<UserAction<EncryptedWord>>,
+    ss: &State<MutexServerStorage>,
+) -> Result<Json<UserId>, ErrorResponse> {
+    let mut ss = ss.lock().await;
+
+    ss.ensure(ServerState::ReadyForActions)?;
+
+    let user = ss.get_user(user_id)?;
+    println!("{} requested action {}", user.name, action.to_string());
+    let action = action.unpack(user_id);
+
+    let result = match action {
         UserAction::MovePlayer { .. }
         | UserAction::LayEgg { .. }
         | UserAction::PickupEgg { .. }
-        | UserAction::GetCell { .. } => ss.action_queue.push((user_id, action)),
-        UserAction::Done => ss.transit(ServerState::ReadyForRunning),
+        | UserAction::GetCell { .. } => {
+            ss.action_queue.push((user_id, action));
+            ss.transit(ServerState::ReadyForRunning);
+            Ok(Json(user_id))
+        }
+        _ => Err(Error::WrongServerState {
+            expect: ServerState::ReadyForActions.to_string(),
+            got: ss.state.to_string(),
+        }
+        .into()),
     };
 
-    Ok(Json(user_id))
+    result
 }
 
-/// The admin runs the fhe computation
-#[post("/run")]
-async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorResponse> {
+#[post("/done/<user_id>", data = "<action>", format = "msgpack")]
+async fn done(
+    user_id: UserId,
+    action: MsgPack<UserAction<EncryptedWord>>,
+    ss: &State<MutexServerStorage>,
+) -> Result<Json<UserId>, ErrorResponse> {
+    let mut ss = ss.lock().await;
+
+    ss.ensure(ServerState::CompletedFhe)?;
+
+    let user = ss.get_user(user_id)?;
+    println!("{} requested action {}", user.name, action.to_string());
+    let action = action.unpack(user_id);
+
+    let result = match action {
+        UserAction::Done => {
+            user.ready_for_new_round = true;
+            Ok(Json(user_id))
+        }
+        _ => Err(Error::WrongServerState {
+            expect: ServerState::CompletedFhe.to_string(),
+            got: ss.state.to_string(),
+        }
+        .into()),
+    };
+
+    if ss.check_ready_for_new_round() {
+        ss.transit(ServerState::ReadyForActions);
+        for user in ss.users.iter_mut() {
+            user.ready_for_new_round = false;
+            user.storage = UserStorage::DecryptionShare(None);
+        }
+    }
+
+    result
+}
+
+#[post("/run/<user_id>")]
+async fn run(
+    user_id: UserId,
+    ss: &State<MutexServerStorage>,
+) -> Result<Json<ServerState>, ErrorResponse> {
     let s2 = (*ss).clone();
     let mut ss = ss.lock().await;
 
@@ -148,11 +229,13 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                 println!("Begin FHE run");
                                 // Long running
                                 let final_game_state = evaluate_circuit(game_state, &uas);
-                                let cells = get_cells(&final_game_state, 4);
+
+                                let cell = get_user_cell(&final_game_state, user_id);
                                 let mut ss = s2.blocking_lock();
                                 ss.game_state = Some(final_game_state);
-                                let cells = CircuitOutput::new(cells);
-                                ss.cells = Some(cells);
+                                let cell = CircuitOutput::new(cell);
+                                ss.circuit_output = Some(cell);
+
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
                             })
@@ -179,45 +262,43 @@ async fn get_fhe_output(
 ) -> Result<Json<CircuitOutput>, ErrorResponse> {
     let ss = ss.lock().await;
     ss.ensure(ServerState::CompletedFhe)?;
-    let cells = ss.cells.clone().ok_or(Error::CellNotFound)?;
-    Ok(Json(cells))
+    let cell = ss.circuit_output.clone().ok_or(Error::CellNotFound)?;
+    Ok(Json(cell))
 }
 
 /// The user submits the ciphertext
-#[post("/submit_decryption_shares", data = "<submission>", format = "msgpack")]
-async fn submit_decryption_shares(
+#[post("/submit_decryption_share", data = "<submission>", format = "msgpack")]
+async fn submit_decryption_share(
     submission: MsgPack<DecryptionShareSubmission>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let user_id = submission.user_id;
     let mut ss = ss.lock().await;
-    let decryption_shares = ss
+    ss.ensure(ServerState::CompletedFhe)?;
+    let decryption_share = ss
         .get_user(user_id)?
         .storage
-        .get_mut_decryption_shares()
+        .get_mut_decryption_share()
         .ok_or(Error::OutputNotReady)?;
-    *decryption_shares = Some(submission.decryption_shares.to_vec());
+    *decryption_share = Some(submission.decryption_share.clone());
     Ok(Json(user_id))
 }
 
-#[get("/decryption_share/<fhe_output_id>/<user_id>")]
+#[get("/decryption_share/<user_id>")]
 async fn get_decryption_share(
-    fhe_output_id: usize,
     user_id: UserId,
     ss: &State<MutexServerStorage>,
-) -> Result<Json<AnnotatedDecryptionShare>, ErrorResponse> {
+) -> Result<Json<DecryptionShare>, ErrorResponse> {
     let mut ss: tokio::sync::MutexGuard<ServerStorage> = ss.lock().await;
-    let decryption_shares = ss
+    ss.ensure(ServerState::CompletedFhe)?;
+    let decryption_share = ss
         .get_user(user_id)?
         .storage
-        .get_mut_decryption_shares()
+        .get_mut_decryption_share()
         .cloned()
         .ok_or(Error::OutputNotReady)?
-        .ok_or(Error::DecryptionShareNotFound {
-            output_id: fhe_output_id,
-            user_id,
-        })?;
-    Ok(Json(decryption_shares[fhe_output_id].clone()))
+        .ok_or(Error::DecryptionShareNotFound { user_id })?;
+    Ok(Json(decryption_share.clone()))
 }
 
 pub fn setup(seed: &Seed) {
@@ -241,10 +322,12 @@ pub fn rocket() -> Rocket<Build> {
                 register,
                 get_dashboard,
                 submit_sks,
+                setup_game,
                 request_action,
+                done,
                 run,
                 get_fhe_output,
-                submit_decryption_shares,
+                submit_decryption_share,
                 get_decryption_share,
             ],
         )

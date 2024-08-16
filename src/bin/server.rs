@@ -1,4 +1,4 @@
-use karma_calculator::rocket;
+use chickens::rocket;
 
 #[rocket::main]
 async fn main() -> Result<(), rocket::Error> {

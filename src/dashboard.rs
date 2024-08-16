@@ -10,7 +10,8 @@ use crate::UserId;
 #[serde(crate = "rocket::serde")]
 pub enum UserStatus {
     IDAcquired,
-    CipherSubmitted,
+    SksSubmitted,
+    StartingCoordsSubmitted,
     DecryptionShareSubmitted,
 }
 impl std::fmt::Display for UserStatus {
@@ -39,10 +40,17 @@ impl RegisteredUser {
 impl From<&UserRecord> for RegisteredUser {
     fn from(user: &UserRecord) -> Self {
         use crate::types::UserStorage::*;
-        let status = match user.storage {
+        let status = match &user.storage {
             Empty => UserStatus::IDAcquired,
-            Sks(_) => UserStatus::CipherSubmitted,
-            DecryptionShare(_) => UserStatus::DecryptionShareSubmitted,
+            Sks(_) => UserStatus::SksSubmitted,
+            StartingCoords => UserStatus::StartingCoordsSubmitted,
+            DecryptionShare(share) => {
+                let result = match share {
+                    Some(_) => UserStatus::DecryptionShareSubmitted,
+                    None => UserStatus::StartingCoordsSubmitted,
+                };
+                result
+            }
         };
 
         Self {
@@ -73,13 +81,36 @@ impl Dashboard {
             .collect_vec()
     }
 
-    /// An API for client to check server state
+    /// APIs for client to check server state
     pub fn is_concluded(&self) -> bool {
-        self.status == ServerState::ReadyForInputs
+        self.status == ServerState::ReadyForServerKeyShares
+    }
+
+    pub fn is_submit_sks_complete(&self) -> bool {
+        self.status == ServerState::ReadyForSetupGame
+    }
+
+    pub fn is_setup_game_complete(&self) -> bool {
+        self.status != ServerState::ReadyForSetupGame
+    }
+
+    pub fn is_fhe_ongoing(&self) -> bool {
+        self.status == ServerState::ReadyForRunning
+            || self.status == ServerState::RunningFhe
+            || self.status == ServerState::CompletedFhe
     }
 
     pub fn is_fhe_complete(&self) -> bool {
         self.status == ServerState::CompletedFhe
+    }
+
+    pub fn is_decryption_shares_submission_complete(&self, user_id: UserId) -> bool {
+        for user in self.users.iter() {
+            if user.id != user_id && !matches!(user.status, UserStatus::DecryptionShareSubmitted) {
+                return false;
+            }
+        }
+        true
     }
 
     pub fn print_presentation(&self) {
