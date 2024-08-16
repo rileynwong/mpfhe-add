@@ -1,11 +1,12 @@
-use crate::circuit::{derive_server_key, evaluate_circuit, get_cells, PARAMETER};
+use crate::circuit::{derive_server_key, evaluate_circuit, get_user_cell, PARAMETER};
 use crate::dashboard::{Dashboard, RegisteredUser};
 
 use crate::types::{
-    CircuitOutput, DecryptionShareSubmission, EncryptedWord, Error, ErrorResponse, GameStateEnc,
-    MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId, UserStorage,
+    CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Error, ErrorResponse,
+    GameStateEnc, MutexServerStorage, Seed, ServerState, ServerStorage, SksSubmission, UserId,
+    UserStorage,
 };
-use crate::{AnnotatedDecryptionShare, UserAction};
+use crate::UserAction;
 use phantom_zone::{set_common_reference_seed, set_parameter_set};
 use rand::{thread_rng, RngCore};
 use rocket::serde::json::Json;
@@ -168,8 +169,11 @@ async fn request_action(
     result
 }
 
-#[post("/run")]
-async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorResponse> {
+#[post("/run/<user_id>")]
+async fn run(
+    user_id: UserId,
+    ss: &State<MutexServerStorage>,
+) -> Result<Json<ServerState>, ErrorResponse> {
     let s2 = (*ss).clone();
     let mut ss = ss.lock().await;
 
@@ -193,13 +197,11 @@ async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorR
                                 // Long running
                                 let final_game_state = evaluate_circuit(game_state, &uas);
 
-                                // TODO //
-                                let cells = get_cells(&final_game_state, 4);
+                                let cell = get_user_cell(&final_game_state, user_id);
                                 let mut ss = s2.blocking_lock();
                                 ss.game_state = Some(final_game_state);
-                                let cells = CircuitOutput::new(cells);
-                                ss.circuit_output = Some(cells);
-                                // TODO //
+                                let cell = CircuitOutput::new(cell);
+                                ss.circuit_output = Some(cell);
 
                                 ss.transit(ServerState::CompletedFhe);
                                 println!("FHE computation completed");
@@ -227,24 +229,24 @@ async fn get_fhe_output(
 ) -> Result<Json<CircuitOutput>, ErrorResponse> {
     let ss = ss.lock().await;
     ss.ensure(ServerState::CompletedFhe)?;
-    let cells = ss.circuit_output.clone().ok_or(Error::CellNotFound)?;
-    Ok(Json(cells))
+    let cell = ss.circuit_output.clone().ok_or(Error::CellNotFound)?;
+    Ok(Json(cell))
 }
 
 /// The user submits the ciphertext
-#[post("/submit_decryption_shares", data = "<submission>", format = "msgpack")]
-async fn submit_decryption_shares(
+#[post("/submit_decryption_share", data = "<submission>", format = "msgpack")]
+async fn submit_decryption_share(
     submission: MsgPack<DecryptionShareSubmission>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let user_id = submission.user_id;
     let mut ss = ss.lock().await;
-    let decryption_shares = ss
+    let decryption_share = ss
         .get_user(user_id)?
         .storage
-        .get_mut_decryption_shares()
+        .get_mut_decryption_share()
         .ok_or(Error::OutputNotReady)?;
-    *decryption_shares = Some(submission.decryption_shares.to_vec());
+    *decryption_share = Some(submission.decryption_share.clone());
     Ok(Json(user_id))
 }
 
@@ -253,19 +255,19 @@ async fn get_decryption_share(
     fhe_output_id: usize,
     user_id: UserId,
     ss: &State<MutexServerStorage>,
-) -> Result<Json<AnnotatedDecryptionShare>, ErrorResponse> {
+) -> Result<Json<DecryptionShare>, ErrorResponse> {
     let mut ss: tokio::sync::MutexGuard<ServerStorage> = ss.lock().await;
-    let decryption_shares = ss
+    let decryption_share = ss
         .get_user(user_id)?
         .storage
-        .get_mut_decryption_shares()
+        .get_mut_decryption_share()
         .cloned()
         .ok_or(Error::OutputNotReady)?
         .ok_or(Error::DecryptionShareNotFound {
             output_id: fhe_output_id,
             user_id,
         })?;
-    Ok(Json(decryption_shares[fhe_output_id].clone()))
+    Ok(Json(decryption_share.clone()))
 }
 
 pub fn setup(seed: &Seed) {
@@ -293,7 +295,7 @@ pub fn rocket() -> Rocket<Build> {
                 request_action,
                 run,
                 get_fhe_output,
-                submit_decryption_shares,
+                submit_decryption_share,
                 get_decryption_share,
             ],
         )

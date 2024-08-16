@@ -1,10 +1,10 @@
 use crate::{
     dashboard::{Dashboard, RegisteredUser},
     types::{
-        CircuitOutput, DecryptionShareSubmission, EncryptedWord, Seed, ServerKeyShare, ServerState,
-        SksSubmission, UserAction, UserId,
+        CircuitOutput, DecryptionShare, DecryptionShareSubmission, EncryptedWord, Seed,
+        ServerKeyShare, ServerState, SksSubmission, UserAction, UserId,
     },
-    AnnotatedDecryptionShare, ClientKey, Direction,
+    ClientKey, Direction,
 };
 use anyhow::{anyhow, bail, Error};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -204,24 +204,24 @@ impl WebClient {
         self.request_action(user_id, &UserAction::GetCell).await
     }
 
-    pub async fn trigger_fhe_run(&self) -> Result<ServerState, Error> {
-        self.post_nobody("/run").await
+    pub async fn trigger_fhe_run(&self, user_id: usize) -> Result<ServerState, Error> {
+        self.post_nobody(&format!("/run/{user_id}")).await
     }
 
     pub async fn get_fhe_output(&self) -> Result<CircuitOutput, Error> {
         self.get("/fhe_output").await
     }
 
-    pub async fn submit_decryption_shares(
+    pub async fn submit_decryption_share(
         &self,
         user_id: usize,
-        decryption_shares: &[AnnotatedDecryptionShare],
+        decryption_share: &DecryptionShare,
     ) -> Result<UserId, Error> {
         let submission = DecryptionShareSubmission {
             user_id,
-            decryption_shares: decryption_shares.to_vec(),
+            decryption_share: decryption_share.clone(),
         };
-        self.post_msgpack("/submit_decryption_shares", &submission)
+        self.post_msgpack("/submit_decryption_share", &submission)
             .await
     }
 
@@ -229,7 +229,7 @@ impl WebClient {
         &self,
         output_id: usize,
         user_id: usize,
-    ) -> Result<AnnotatedDecryptionShare, Error> {
+    ) -> Result<DecryptionShare, Error> {
         self.get(&format!("/decryption_share/{output_id}/{user_id}"))
             .await
     }

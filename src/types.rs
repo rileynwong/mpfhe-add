@@ -33,9 +33,6 @@ pub(crate) type EncryptedWord = NonInteractiveSeededFheBools<Vec<u64>, Seed>;
 /// Decryption share for a word from one user.
 pub type DecryptionShare = Vec<u64>;
 
-/// Decryption share with output id
-pub type AnnotatedDecryptionShare = (usize, DecryptionShare);
-
 pub const BOARD_DIM: usize = 4;
 pub const BOARD_SIZE: usize = BOARD_DIM * BOARD_DIM;
 
@@ -250,64 +247,38 @@ fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitOutput {
-    cells: Vec<Word>,
+    cell: Word,
 }
 
-// TODO //
 impl CircuitOutput {
-    pub(crate) fn new(cells: Vec<Word>) -> Self {
-        Self { cells }
+    pub(crate) fn new(cell: Word) -> Self {
+        Self { cell }
     }
 
-    /// For each output word, a user generates its decryption share
-    pub fn gen_decryption_shares(&self, ck: &ClientKey) -> Vec<AnnotatedDecryptionShare> {
-        self.cells
+    pub fn gen_decryption_share(&self, ck: &ClientKey) -> DecryptionShare {
+        let dec_share = self
+            .cell
+            .iter()
+            .map(|out_bit| ck.gen_decryption_share(out_bit))
+            .collect_vec();
+        dec_share
+    }
+
+    pub fn decrypt(&self, ck: &ClientKey, dss: &[DecryptionShare]) -> Vec<bool> {
+        // A DecryptionShare is user i's contribution to word j.
+        // To decrypt word j at bit position k. We need to extract the position k of user i's share.
+        let decrypted_bits = self
+            .cell
             .iter()
             .enumerate()
-            .map(|(cell_id, word)| (cell_id, gen_decryption_shares(ck, word)))
-            .collect_vec()
-    }
-
-    pub fn decrypt(&self, ck: &ClientKey, dss: &[Vec<DecryptionShare>]) -> Vec<Vec<bool>> {
-        self.cells
-            .iter()
-            .zip_eq(dss)
-            .map(|(word, shares)| decrypt_word(ck, word, shares))
-            .collect_vec()
-    }
-
-    /// Get number of outputs
-    pub fn n(&self) -> usize {
-        self.cells.len()
+            .map(|(bit_k, fhe_bit)| {
+                let shares_for_bit_k = dss.iter().map(|user_share| user_share[bit_k]).collect_vec();
+                ck.aggregate_decryption_shares(fhe_bit, &shares_for_bit_k)
+            })
+            .collect_vec();
+        decrypted_bits
     }
 }
-
-pub fn gen_decryption_shares(ck: &ClientKey, fhe_output: &Word) -> DecryptionShare {
-    let dec_shares = fhe_output
-        .iter()
-        .map(|out_bit| ck.gen_decryption_share(out_bit))
-        .collect_vec();
-    dec_shares
-}
-
-fn decrypt_word(ck: &ClientKey, fhe_output: &Word, shares: &[DecryptionShare]) -> Vec<bool> {
-    // A DecryptionShare is user i's contribution to word j.
-    // To decrypt word j at bit position k. We need to extract the position k of user i's share.
-    let decrypted_bits = fhe_output
-        .iter()
-        .enumerate()
-        .map(|(bit_k, fhe_bit)| {
-            let shares_for_bit_k = shares
-                .iter()
-                .map(|user_share| user_share[bit_k])
-                .collect_vec();
-            ck.aggregate_decryption_shares(fhe_bit, &shares_for_bit_k)
-        })
-        .collect_vec();
-    decrypted_bits
-}
-
-// TODO //
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
@@ -482,7 +453,7 @@ pub(crate) enum UserStorage {
     Empty,
     Sks(Box<ServerKeyShare>),
     StartingCoords,
-    DecryptionShare(Option<Vec<AnnotatedDecryptionShare>>),
+    DecryptionShare(Option<DecryptionShare>),
 }
 
 impl UserStorage {
@@ -493,9 +464,7 @@ impl UserStorage {
         }
     }
 
-    pub(crate) fn get_mut_decryption_shares(
-        &mut self,
-    ) -> Option<&mut Option<Vec<AnnotatedDecryptionShare>>> {
+    pub(crate) fn get_mut_decryption_share(&mut self) -> Option<&mut Option<DecryptionShare>> {
         match self {
             Self::DecryptionShare(ds) => Some(ds),
             _ => None,
@@ -504,7 +473,7 @@ impl UserStorage {
 }
 
 /// ([`Word`] index, user_id) -> decryption share
-pub type DecryptionSharesMap = HashMap<(usize, UserId), DecryptionShare>;
+pub type DecryptionSharesMap = HashMap<UserId, DecryptionShare>;
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
@@ -517,6 +486,5 @@ pub(crate) struct SksSubmission {
 #[serde(crate = "rocket::serde")]
 pub(crate) struct DecryptionShareSubmission {
     pub(crate) user_id: UserId,
-    /// The user sends decryption share for each [`Word`].
-    pub(crate) decryption_shares: Vec<AnnotatedDecryptionShare>,
+    pub(crate) decryption_share: DecryptionShare,
 }
