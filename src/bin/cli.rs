@@ -425,6 +425,11 @@ async fn cmd_done(client: &WebClient, user_id: UserId) -> Result<(), Error> {
     Ok(())
 }
 
+async fn cmd_ready_for_actions(client: &WebClient) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    Ok(d.is_ready_for_actions())
+}
+
 async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
     let terms: Vec<&str> = line.split_whitespace().collect();
     if terms.is_empty() {
@@ -589,7 +594,16 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 })),
                 Err(err) => Err((err, State::Decrypted(s))),
             },
-            State::NewRound(s) => Ok(State::ConcludedSetupGame(s)),
+            State::NewRound(s) => match cmd_ready_for_actions(&s.client).await {
+                Ok(is_ready) => {
+                    if is_ready {
+                        Ok(State::ConcludedSetupGame(s))
+                    } else {
+                        Ok(State::NewRound(s))
+                    }
+                }
+                Err(err) => Err((err, State::NewRound(s))),
+            },
         }
     } else if cmd == &"move" {
         match state {

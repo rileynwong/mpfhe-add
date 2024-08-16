@@ -113,6 +113,10 @@ impl Dashboard {
         true
     }
 
+    pub fn is_ready_for_actions(&self) -> bool {
+        self.status == ServerState::ReadyForActions
+    }
+
     pub fn print_presentation(&self) {
         println!("🤖🧠 {}", self.status);
         let users = Table::new(&self.users)
