@@ -192,6 +192,7 @@ async fn done(
     };
 
     if ss.check_ready_for_new_round() {
+        ss.round += 1;
         ss.transit(ServerState::ReadyForActions);
         for user in ss.users.iter_mut() {
             user.ready_for_new_round = false;
@@ -280,24 +281,27 @@ async fn submit_decryption_share(
         .storage
         .get_mut_decryption_share()
         .ok_or(Error::OutputNotReady)?;
-    *decryption_share = Some(submission.decryption_share.clone());
+    let output_id = submission.decryption_share.0;
+    let share = &submission.decryption_share.1;
+    *decryption_share = Some(share.clone());
+
+    ss.decryption_shares
+        .insert((output_id, user_id), share.clone());
     Ok(Json(user_id))
 }
 
-#[get("/decryption_share/<user_id>")]
+#[get("/decryption_share/<output_id>/<user_id>")]
 async fn get_decryption_share(
+    output_id: usize,
     user_id: UserId,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<DecryptionShare>, ErrorResponse> {
     let mut ss: tokio::sync::MutexGuard<ServerStorage> = ss.lock().await;
     ss.ensure(ServerState::CompletedFhe)?;
     let decryption_share = ss
-        .get_user(user_id)?
-        .storage
-        .get_mut_decryption_share()
-        .cloned()
-        .ok_or(Error::OutputNotReady)?
-        .ok_or(Error::DecryptionShareNotFound { user_id })?;
+        .decryption_shares
+        .get(&(output_id, user_id))
+        .ok_or(Error::OutputNotReady)?;
     Ok(Json(decryption_share.clone()))
 }
 
