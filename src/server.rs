@@ -151,14 +151,7 @@ async fn request_action(
         | UserAction::LayEgg { .. }
         | UserAction::PickupEgg { .. }
         | UserAction::GetCell { .. } => {
-            ss.ensure(ServerState::ReadyForActions)?;
             ss.action_queue.push((user_id, action));
-            // Note: run fhe on every action, no need to call done
-            ss.transit(ServerState::ReadyForRunning);
-            Ok(Json(user_id))
-        }
-        UserAction::Done => {
-            ss.ensure(ServerState::ReadyForActions)?;
             ss.transit(ServerState::ReadyForRunning);
             Ok(Json(user_id))
         }
@@ -168,6 +161,43 @@ async fn request_action(
         }
         .into()),
     };
+
+    result
+}
+
+#[post("/done/<user_id>", data = "<action>", format = "msgpack")]
+async fn done(
+    user_id: UserId,
+    action: MsgPack<UserAction<EncryptedWord>>,
+    ss: &State<MutexServerStorage>,
+) -> Result<Json<UserId>, ErrorResponse> {
+    let mut ss = ss.lock().await;
+
+    ss.ensure(ServerState::CompletedFhe)?;
+
+    let user = ss.get_user(user_id)?;
+    println!("{} requested action {}", user.name, action.to_string());
+    let action = action.unpack(user_id);
+
+    let result = match action {
+        UserAction::Done => {
+            user.ready_for_new_round = true;
+            Ok(Json(user_id))
+        }
+        _ => Err(Error::WrongServerState {
+            expect: ServerState::CompletedFhe.to_string(),
+            got: ss.state.to_string(),
+        }
+        .into()),
+    };
+
+    if ss.check_ready_for_new_round() {
+        ss.transit(ServerState::ReadyForActions);
+        for user in ss.users.iter_mut() {
+            user.ready_for_new_round = false;
+            user.storage = UserStorage::DecryptionShare(None);
+        }
+    }
 
     result
 }
@@ -244,6 +274,7 @@ async fn submit_decryption_share(
 ) -> Result<Json<UserId>, ErrorResponse> {
     let user_id = submission.user_id;
     let mut ss = ss.lock().await;
+    ss.ensure(ServerState::CompletedFhe)?;
     let decryption_share = ss
         .get_user(user_id)?
         .storage
@@ -259,6 +290,7 @@ async fn get_decryption_share(
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<DecryptionShare>, ErrorResponse> {
     let mut ss: tokio::sync::MutexGuard<ServerStorage> = ss.lock().await;
+    ss.ensure(ServerState::CompletedFhe)?;
     let decryption_share = ss
         .get_user(user_id)?
         .storage
@@ -292,6 +324,7 @@ pub fn rocket() -> Rocket<Build> {
                 submit_sks,
                 setup_game,
                 request_action,
+                done,
                 run,
                 get_fhe_output,
                 submit_decryption_share,

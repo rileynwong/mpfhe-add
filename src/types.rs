@@ -391,6 +391,7 @@ impl ServerStorage {
             id: user_id,
             name: name.to_string(),
             storage: UserStorage::Empty,
+            ready_for_new_round: false,
         });
         RegisteredUser::new(user_id, name)
     }
@@ -423,6 +424,10 @@ impl ServerStorage {
             .all(|user| matches!(user.storage, UserStorage::StartingCoords))
     }
 
+    pub(crate) fn check_ready_for_new_round(&self) -> bool {
+        self.users.iter().all(|user| user.ready_for_new_round)
+    }
+
     pub(crate) fn get_sks(&mut self) -> Result<Vec<ServerKeyShare>, Error> {
         let mut server_key_shares = vec![];
         for (user_id, user) in self.users.iter_mut().enumerate() {
@@ -445,6 +450,7 @@ pub(crate) struct UserRecord {
     pub(crate) id: UserId,
     pub(crate) name: String,
     pub(crate) storage: UserStorage,
+    pub(crate) ready_for_new_round: bool,
 }
 
 #[derive(Debug, Clone)]

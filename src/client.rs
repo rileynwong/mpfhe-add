@@ -196,8 +196,10 @@ impl WebClient {
         self.request_action(user_id, &UserAction::PickupEgg).await
     }
 
+    // `done` should be called after decrypted the output, and want to start a new
     pub async fn done(&self, user_id: UserId) -> Result<UserId, Error> {
-        self.request_action(user_id, &UserAction::Done).await
+        let action: &UserAction<EncryptedWord> = &UserAction::Done;
+        self.post_msgpack(&format!("/done/{user_id}"), action).await
     }
 
     pub async fn get_cell(&self, user_id: usize) -> Result<UserId, Error> {

@@ -31,6 +31,7 @@ enum State {
     DownloadedOutput(StateDownloadedOutput),
     ConcludedDecryptionSubmission(StateDownloadedOutput),
     Decrypted(StateDecrypted),
+    NewRound(StateGame),
 }
 
 impl Display for State {
@@ -49,6 +50,7 @@ impl Display for State {
             State::DownloadedOutput(_) => "Downloaded Output",
             State::ConcludedDecryptionSubmission(_) => "Concluded decryption share submission",
             State::Decrypted(_) => "Decrypted",
+            State::NewRound(_) => "Ready for another action",
         };
         write!(f, "{{{{ {} }}}}", label)
     }
@@ -74,6 +76,7 @@ impl State {
                 "✅ Decryption shares submitted!".to_string()
             }
             State::Decrypted(_) => "✅ FHE output decrypted!".to_string(),
+            State::NewRound(_) => "✅ Ready for another action!".to_string(),
         };
         println!("{}", msg)
     }
@@ -89,7 +92,8 @@ impl State {
             State::ConcludedSetupGame(_) => "Enter one of the commands {`move up` | `move down` | `move left` | `move right` | `lay` | `pickup`}",
             State::GameAction(_) => "Server running FHE. Enter `next` to check if it completed",
             State::DownloadedOutput(_) => "Wait for other players to submit decryption shares. Enter `next` to check if we can proceed.",
-            State::Decrypted(_) => "Exit with `CTRL-D`",
+            State::Decrypted(_) => "Enter `next` to take another action; Or exit with `CTRL-D`",
+            State::NewRound(_) => "Wait for other users to be ready. Enter `next` check if we can proceed.",
             _ => "Enter `next` to continue",
         };
         println!("👇 {}", msg)
@@ -150,10 +154,14 @@ struct StateDownloadedOutput {
 
 struct StateDecrypted {
     #[allow(dead_code)]
-    names: Vec<String>,
+    name: String,
     client: WebClient,
-    decrypted_output: Option<Vec<bool>>,
+    ck: ClientKey,
+    user_id: UserId,
+    names: Vec<String>,
     view: GameStateLocalView,
+    is_my_action: bool,
+    decrypted_output: Option<Vec<bool>>,
 }
 
 #[tokio::main]
@@ -412,6 +420,11 @@ async fn cmd_download_shares(
     Ok(decrypted_output)
 }
 
+async fn cmd_done(client: &WebClient, user_id: UserId) -> Result<(), Error> {
+    client.done(user_id).await?;
+    Ok(())
+}
+
 async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
     let terms: Vec<&str> = line.split_whitespace().collect();
     if terms.is_empty() {
@@ -489,15 +502,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 }
                 Err(err) => Err((err, State::SetupGame(s))),
             },
-            State::ConcludedSetupGame(s) => Ok(State::CompletedFhe(StateGameAction {
-                is_my_action: false,
-                name: s.name,
-                client: s.client,
-                ck: s.ck,
-                user_id: s.user_id,
-                names: s.names,
-                view: s.view,
-            })),
+            State::ConcludedSetupGame(s) => Ok(State::ConcludedSetupGame(s)),
             State::GameAction(s) => match cmd_fhe_complete(&s.client).await {
                 Ok(is_complete) => {
                     if is_complete {
@@ -527,10 +532,14 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             State::DownloadedOutput(s) => {
                 if !s.is_my_action {
                     return Ok(State::Decrypted(StateDecrypted {
-                        names: s.names,
+                        name: s.name,
                         client: s.client,
-                        decrypted_output: None,
+                        ck: s.ck,
+                        user_id: s.user_id,
+                        names: s.names,
                         view: s.view,
+                        decrypted_output: None,
+                        is_my_action: false,
                     }));
                 }
                 match cmd_decryption_submission_completed(&s.client, &s.user_id).await {
@@ -557,15 +566,30 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 .await
                 {
                     Ok(decrypted_output) => Ok(State::Decrypted(StateDecrypted {
-                        names: s.names,
+                        name: s.name,
                         client: s.client,
+                        ck: s.ck,
+                        user_id: s.user_id,
+                        names: s.names,
                         decrypted_output: Some(decrypted_output),
                         view: s.view,
+                        is_my_action: true,
                     })),
                     Err(err) => Err((err, State::DownloadedOutput(s))),
                 }
             }
-            State::Decrypted(s) => Ok(State::Decrypted(s)),
+            State::Decrypted(s) => match cmd_done(&s.client, s.user_id).await {
+                Ok(()) => Ok(State::NewRound(StateGame {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                    view: s.view,
+                })),
+                Err(err) => Err((err, State::Decrypted(s))),
+            },
+            State::NewRound(s) => Ok(State::ConcludedSetupGame(s)),
         }
     } else if cmd == &"move" {
         match state {
@@ -706,6 +730,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             | State::CompletedFhe(StateGameAction { client, .. })
             | State::DownloadedOutput(StateDownloadedOutput { client, .. })
             | State::ConcludedDecryptionSubmission(StateDownloadedOutput { client, .. })
+            | State::NewRound(StateGame { client, .. })
             | State::Decrypted(StateDecrypted { client, .. }) => {
                 match client.get_dashboard().await {
                     Ok(dashbaord) => {
