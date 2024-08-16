@@ -23,8 +23,11 @@ enum State {
     ConcludedRegistration(Registration),
     SubmittedSks(Registration),
     ConcludedSubmitSks(Registration),
-    InitGame(StateInitGame),
-    TriggeredRun(StateTriggeredRun),
+    InitGame(StateGame),
+    SetupGame(StateGame), // set starting coordinates
+    ConcludedSetupGame(StateGame),
+    GameAction(StateGame),
+    CompletedFhe(StateGame),
     DownloadedOutput(StateDownloadedOutput),
     Decrypted(StateDecrypted),
 }
@@ -38,7 +41,10 @@ impl Display for State {
             State::SubmittedSks(_) => "Submitted Server Key Share",
             State::ConcludedSubmitSks(_) => "Concluded SubmitSks",
             State::InitGame(_) => "Init game",
-            State::TriggeredRun(_) => "Triggered Run",
+            State::SetupGame(_) => "Setup game",
+            State::ConcludedSetupGame(_) => "Concluded setup game",
+            State::GameAction(_) => "Took an action",
+            State::CompletedFhe(_) => "Completed FHE",
             State::DownloadedOutput(_) => "Downloaded Output",
             State::Decrypted(_) => "Decrypted",
         };
@@ -53,11 +59,14 @@ impl State {
                 format!("Hi {}, we just connected to server {}.", name, client.url())
             }
             State::Setup(StateSetup { .. }) => "✅ Setup completed!".to_string(),
-            State::ConcludedRegistration(_) => "✅ Got 4 users!".to_string(),
+            State::ConcludedRegistration(_) => "✅ Got 4 players!".to_string(),
             State::SubmittedSks(_) => "✅ Server key share submitted!".to_string(),
-            State::ConcludedSubmitSks(_) => "✅ Server got all server key shares!".to_string(),
+            State::ConcludedSubmitSks(_) => "✅ Got all 4 server key shares!".to_string(),
             State::InitGame(_) => "✅ New game start!".to_string(),
-            State::TriggeredRun(_) => "✅ FHE run triggered!".to_string(),
+            State::SetupGame(_) => "✅ Set starting coordinates!".to_string(),
+            State::ConcludedSetupGame(_) => "✅ Got all 4 starting coordinates!".to_string(),
+            State::GameAction(_) => "✅ Took an action!".to_string(),
+            State::CompletedFhe(_) => "✅ Completed FHE!".to_string(),
             State::DownloadedOutput(_) => "✅ FHE output downloaded!".to_string(),
             State::Decrypted(_) => "✅ FHE output decrypted!".to_string(),
         };
@@ -70,6 +79,10 @@ impl State {
             State::SubmittedSks(_) =>
                 "Server needs to get all 4 server key shares. Enter `next` to check if we can proceed.",
             State::ConcludedSubmitSks(_) => "Enter `next` to start a new game.",
+            State::InitGame(_) => "Enter `next ${x} ${y}` with your starting coordinates (x, y).\n The board is 4 x 4, so x, y has to be in the range [0, 3]." ,
+            State::SetupGame(_) => "Wait for every user to set starting coordinates. Enter `next` to check if we can proceed.",
+            State::ConcludedSetupGame(_) => "Enter one of the commands {`move up` | `move down` | `move left` | `move right` | `lay` | `pickup`}",
+            State::GameAction(_) => "Server running FHE. Enter `next` to check if it completed",
             State::Decrypted(_) => "Exit with `CTRL-D`",
             _ => "Enter `next` to continue",
         };
@@ -97,16 +110,7 @@ struct Registration {
     names: Vec<String>,
 }
 
-struct StateInitGame {
-    name: String,
-    client: WebClient,
-    ck: ClientKey,
-    user_id: UserId,
-    names: Vec<String>,
-    view: GameStateLocalView,
-}
-
-struct StateTriggeredRun {
+struct StateGame {
     name: String,
     client: WebClient,
     ck: ClientKey,
@@ -238,10 +242,23 @@ async fn cmd_setup_game(
         .ok_or_else(|| anyhow!("please add init y coordinate"))?
         .parse::<u8>()?;
 
+    if x > 3 {
+        return Err(anyhow!("init x coordinate has to be in the range [0, 3]"));
+    }
+    if y > 3 {
+        return Err(anyhow!("init y coordinate has to be in the range [0, 3]"));
+    }
+
     let view = GameStateLocalView::new(x, y, user_id);
     client.set_starting_coords(ck, user_id, &(x, y)).await?;
     view.print();
     Ok(view)
+}
+
+async fn cmd_setup_game_complete(client: &WebClient) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    d.print_presentation();
+    Ok(d.is_setup_game_complete())
 }
 
 async fn cmd_move(
@@ -266,6 +283,7 @@ async fn cmd_move(
     let mut view = view.clone();
     view.move_player(direction);
     view.print();
+    trigger_run(client).await?;
     Ok(view)
 }
 
@@ -278,6 +296,7 @@ async fn cmd_lay(
     let mut view = view.clone();
     view.lay();
     view.print();
+    trigger_run(client).await?;
     Ok(view)
 }
 
@@ -290,19 +309,20 @@ async fn cmd_pickup(
     let mut view = view.clone();
     view.pickup();
     view.print();
+    trigger_run(client).await?;
     Ok(view)
 }
 
-async fn cmd_done(client: &WebClient, user_id: UserId) -> Result<(), Error> {
-    client.done(user_id).await?;
-    Ok(())
-}
-
-async fn cmd_run(client: &WebClient) -> Result<(), Error> {
+async fn trigger_run(client: &WebClient) -> Result<(), Error> {
     println!("Requesting FHE run ...");
     let resp = client.trigger_fhe_run().await?;
     println!("Server: {}", resp);
     Ok(())
+}
+
+async fn cmd_fhe_complete(client: &WebClient) -> Result<bool, Error> {
+    let d = client.get_dashboard().await?;
+    Ok(d.is_fhe_complete())
 }
 
 async fn cmd_download_output(
@@ -419,7 +439,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             },
             State::ConcludedSubmitSks(s) => {
                 match cmd_init_game(&s.client, &s.ck, s.user_id).await {
-                    Ok(()) => Ok(State::InitGame(StateInitGame {
+                    Ok(()) => Ok(State::InitGame(StateGame {
                         name: s.name,
                         client: s.client,
                         ck: s.ck,
@@ -430,18 +450,39 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     Err(err) => Err((err, State::ConcludedSubmitSks(s))),
                 }
             }
-            State::InitGame(s) => match cmd_run(&s.client).await {
-                Ok(()) => Ok(State::TriggeredRun(StateTriggeredRun {
+            State::InitGame(s) => match cmd_setup_game(args, &s.client, &s.ck, s.user_id).await {
+                Ok(view) => Ok(State::SetupGame(StateGame {
                     name: s.name,
                     client: s.client,
                     ck: s.ck,
                     user_id: s.user_id,
                     names: s.names,
-                    view: s.view,
+                    view,
                 })),
                 Err(err) => Err((err, State::InitGame(s))),
             },
-            State::TriggeredRun(s) => match cmd_download_output(&s.client, &s.user_id, &s.ck).await
+            State::SetupGame(s) => match cmd_setup_game_complete(&s.client).await {
+                Ok(is_complete) => {
+                    if is_complete {
+                        Ok(State::ConcludedSetupGame(s))
+                    } else {
+                        Ok(State::SetupGame(s))
+                    }
+                }
+                Err(err) => Err((err, State::GameAction(s))),
+            },
+            State::ConcludedSetupGame(s) => Ok(State::ConcludedSetupGame(s)),
+            State::GameAction(s) => match cmd_fhe_complete(&s.client).await {
+                Ok(is_complete) => {
+                    if is_complete {
+                        Ok(State::CompletedFhe(s))
+                    } else {
+                        Ok(State::GameAction(s))
+                    }
+                }
+                Err(err) => Err((err, State::GameAction(s))),
+            },
+            State::CompletedFhe(s) => match cmd_download_output(&s.client, &s.user_id, &s.ck).await
             {
                 Ok((fhe_out, shares)) => Ok(State::DownloadedOutput(StateDownloadedOutput {
                     name: s.name,
@@ -453,7 +494,7 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                     shares,
                     view: s.view,
                 })),
-                Err(err) => Err((err, State::TriggeredRun(s))),
+                Err(err) => Err((err, State::CompletedFhe(s))),
             },
             State::DownloadedOutput(mut s) => {
                 match cmd_download_shares(
@@ -488,85 +529,53 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
                 view,
             })),
         }
-    // }
-    // else if cmd == &"setup_game" {
-    //     match state {
-    //         State::SubmittedSks(s) => match cmd_setup_game(args, &s.client, &s.ck, s.user_id).await
-    //         {
-    //             Ok(view) => Ok(State::SubmittedSks(SubmittedSks {
-    //                 name: s.name,
-    //                 client: s.client,
-    //                 ck: s.ck,
-    //                 user_id: s.user_id,
-    //                 names: s.names,
-    //                 view,
-    //             })),
-    //             Err(err) => Err((err, State::SubmittedSks(s))),
-    //         },
-    //         _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-    //     }
-    // } else if cmd == &"move" {
-    //     match state {
-    //         State::SubmittedSks(s) => {
-    //             match cmd_move(args, &s.client, &s.ck, s.user_id, &s.view).await {
-    //                 Ok(view) => Ok(State::SubmittedSks(SubmittedSks {
-    //                     name: s.name,
-    //                     client: s.client,
-    //                     ck: s.ck,
-    //                     user_id: s.user_id,
-    //                     names: s.names,
-    //                     view,
-    //                 })),
-    //                 Err(err) => Err((err, State::SubmittedSks(s))),
-    //             }
-    //         }
-    //         _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-    //     }
-    // } else if cmd == &"lay" {
-    //     match state {
-    //         State::SubmittedSks(s) => match cmd_lay(&s.client, s.user_id, &s.view).await {
-    //             Ok(view) => Ok(State::SubmittedSks(SubmittedSks {
-    //                 name: s.name,
-    //                 client: s.client,
-    //                 ck: s.ck,
-    //                 user_id: s.user_id,
-    //                 names: s.names,
-    //                 view,
-    //             })),
-    //             Err(err) => Err((err, State::SubmittedSks(s))),
-    //         },
-    //         _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-    //     }
-    // } else if cmd == &"pickup" {
-    //     match state {
-    //         State::SubmittedSks(s) => match cmd_pickup(&s.client, s.user_id, &s.view).await {
-    //             Ok(view) => Ok(State::SubmittedSks(SubmittedSks {
-    //                 name: s.name,
-    //                 client: s.client,
-    //                 ck: s.ck,
-    //                 user_id: s.user_id,
-    //                 names: s.names,
-    //                 view,
-    //             })),
-    //             Err(err) => Err((err, State::SubmittedSks(s))),
-    //         },
-    //         _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-    //     }
-    // } else if cmd == &"done" {
-    //     match state {
-    //         State::SubmittedSks(s) => match cmd_done(&s.client, s.user_id).await {
-    //             Ok(()) => Ok(State::SubmittedSks(SubmittedSks {
-    //                 name: s.name,
-    //                 client: s.client,
-    //                 ck: s.ck,
-    //                 user_id: s.user_id,
-    //                 names: s.names,
-    //                 view: s.view,
-    //             })),
-    //             Err(err) => Err((err, State::SubmittedSks(s))),
-    //         },
-    //         _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
-    //     }
+    } else if cmd == &"move" {
+        match state {
+            State::ConcludedSetupGame(s) => {
+                match cmd_move(args, &s.client, &s.ck, s.user_id, &s.view).await {
+                    Ok(view) => Ok(State::GameAction(StateGame {
+                        name: s.name,
+                        client: s.client,
+                        ck: s.ck,
+                        user_id: s.user_id,
+                        names: s.names,
+                        view,
+                    })),
+                    Err(err) => Err((err, State::SetupGame(s))),
+                }
+            }
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
+    } else if cmd == &"lay" {
+        match state {
+            State::ConcludedSetupGame(s) => match cmd_lay(&s.client, s.user_id, &s.view).await {
+                Ok(view) => Ok(State::GameAction(StateGame {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                    view,
+                })),
+                Err(err) => Err((err, State::SetupGame(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
+    } else if cmd == &"pickup" {
+        match state {
+            State::ConcludedSetupGame(s) => match cmd_pickup(&s.client, s.user_id, &s.view).await {
+                Ok(view) => Ok(State::GameAction(StateGame {
+                    name: s.name,
+                    client: s.client,
+                    ck: s.ck,
+                    user_id: s.user_id,
+                    names: s.names,
+                    view,
+                })),
+                Err(err) => Err((err, State::SetupGame(s))),
+            },
+            _ => Err((anyhow!("Invalid state for command {}", cmd), state)),
+        }
     } else if cmd == &"status" {
         match &state {
             State::Init(StateInit { client, .. })
@@ -574,8 +583,11 @@ async fn run(state: State, line: &str) -> Result<State, (Error, State)> {
             | State::ConcludedRegistration(Registration { client, .. })
             | State::SubmittedSks(Registration { client, .. })
             | State::ConcludedSubmitSks(Registration { client, .. })
-            | State::InitGame(StateInitGame { client, .. })
-            | State::TriggeredRun(StateTriggeredRun { client, .. })
+            | State::InitGame(StateGame { client, .. })
+            | State::SetupGame(StateGame { client, .. })
+            | State::ConcludedSetupGame(StateGame { client, .. })
+            | State::GameAction(StateGame { client, .. })
+            | State::CompletedFhe(StateGame { client, .. })
             | State::DownloadedOutput(StateDownloadedOutput { client, .. })
             | State::Decrypted(StateDecrypted { client, .. }) => {
                 match client.get_dashboard().await {

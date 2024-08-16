@@ -63,7 +63,7 @@ async fn submit_sks(
     user.storage = UserStorage::Sks(Box::new(sks));
 
     if ss.check_cipher_submission() {
-        ss.transit(ServerState::ReadyForInputs);
+        ss.transit(ServerState::ReadyForSetupGame);
         let server_key_shares = ss.get_sks()?;
         set_parameter_set(PARAMETER);
         // Long running, global variable change
@@ -73,21 +73,21 @@ async fn submit_sks(
     Ok(Json(user_id))
 }
 
-#[post("/request_action/<user_id>", data = "<action>", format = "msgpack")]
-async fn request_action(
+#[post("/setup_game/<user_id>", data = "<action>", format = "msgpack")]
+async fn setup_game(
     user_id: UserId,
     action: MsgPack<UserAction<EncryptedWord>>,
     ss: &State<MutexServerStorage>,
 ) -> Result<Json<UserId>, ErrorResponse> {
     let mut ss = ss.lock().await;
 
-    ss.ensure(ServerState::ReadyForInputs)?;
+    ss.ensure(ServerState::ReadyForSetupGame)?;
 
     let user = ss.get_user(user_id)?;
-    println!("{} performed {}", user.name, action.to_string());
+    println!("{} requested action {}", user.name, action.to_string());
     let action = action.unpack(user_id);
 
-    match action {
+    let result = match action {
         UserAction::InitGame { initial_eggs } => {
             match &mut ss.game_state {
                 Some(game_state) => game_state.eggs = initial_eggs,
@@ -98,8 +98,10 @@ async fn request_action(
                     })
                 }
             };
+            Ok(Json(user_id))
         }
         UserAction::SetStartingCoord { starting_coord } => {
+            user.storage = UserStorage::StartingCoords;
             match &mut ss.game_state {
                 Some(game_state) => game_state.coords[user_id] = Some(starting_coord),
                 None => {
@@ -111,18 +113,61 @@ async fn request_action(
                     });
                 }
             };
+            if ss.check_setup_game_complete() {
+                ss.transit(ServerState::ReadyForActions);
+            }
+            Ok(Json(user_id))
         }
+        _ => Err(Error::WrongServerState {
+            expect: ServerState::ReadyForRunning.to_string(),
+            got: ss.state.to_string(),
+        }
+        .into()),
+    };
+
+    result
+}
+
+#[post("/request_action/<user_id>", data = "<action>", format = "msgpack")]
+async fn request_action(
+    user_id: UserId,
+    action: MsgPack<UserAction<EncryptedWord>>,
+    ss: &State<MutexServerStorage>,
+) -> Result<Json<UserId>, ErrorResponse> {
+    let mut ss = ss.lock().await;
+
+    ss.ensure(ServerState::ReadyForActions)?;
+
+    let user = ss.get_user(user_id)?;
+    println!("{} requested action {}", user.name, action.to_string());
+    let action = action.unpack(user_id);
+
+    let result = match action {
         UserAction::MovePlayer { .. }
         | UserAction::LayEgg { .. }
         | UserAction::PickupEgg { .. }
-        | UserAction::GetCell { .. } => ss.action_queue.push((user_id, action)),
-        UserAction::Done => ss.transit(ServerState::ReadyForRunning),
+        | UserAction::GetCell { .. } => {
+            ss.ensure(ServerState::ReadyForActions)?;
+            ss.action_queue.push((user_id, action));
+            // Note: run fhe on every action, no need to call done
+            ss.transit(ServerState::ReadyForRunning);
+            Ok(Json(user_id))
+        }
+        UserAction::Done => {
+            ss.ensure(ServerState::ReadyForActions)?;
+            ss.transit(ServerState::ReadyForRunning);
+            Ok(Json(user_id))
+        }
+        _ => Err(Error::WrongServerState {
+            expect: ServerState::ReadyForRunning.to_string(),
+            got: ss.state.to_string(),
+        }
+        .into()),
     };
 
-    Ok(Json(user_id))
+    result
 }
 
-/// The admin runs the fhe computation
 #[post("/run")]
 async fn run(ss: &State<MutexServerStorage>) -> Result<Json<ServerState>, ErrorResponse> {
     let s2 = (*ss).clone();
@@ -244,6 +289,7 @@ pub fn rocket() -> Rocket<Build> {
                 register,
                 get_dashboard,
                 submit_sks,
+                setup_game,
                 request_action,
                 run,
                 get_fhe_output,

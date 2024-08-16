@@ -10,7 +10,8 @@ use crate::UserId;
 #[serde(crate = "rocket::serde")]
 pub enum UserStatus {
     IDAcquired,
-    CipherSubmitted,
+    SksSubmitted,
+    StartingCoordsSubmitted,
     DecryptionShareSubmitted,
 }
 impl std::fmt::Display for UserStatus {
@@ -41,7 +42,8 @@ impl From<&UserRecord> for RegisteredUser {
         use crate::types::UserStorage::*;
         let status = match user.storage {
             Empty => UserStatus::IDAcquired,
-            Sks(_) => UserStatus::CipherSubmitted,
+            Sks(_) => UserStatus::SksSubmitted,
+            StartingCoords => UserStatus::StartingCoordsSubmitted,
             DecryptionShare(_) => UserStatus::DecryptionShareSubmitted,
         };
 
@@ -73,13 +75,17 @@ impl Dashboard {
             .collect_vec()
     }
 
-    /// An API for client to check server state
+    /// APIs for client to check server state
     pub fn is_concluded(&self) -> bool {
         self.status == ServerState::ReadyForServerKeyShares
     }
 
     pub fn is_submit_sks_complete(&self) -> bool {
-        self.status == ServerState::ReadyForInputs
+        self.status == ServerState::ReadyForSetupGame
+    }
+
+    pub fn is_setup_game_complete(&self) -> bool {
+        self.status == ServerState::ReadyForActions
     }
 
     pub fn is_fhe_complete(&self) -> bool {

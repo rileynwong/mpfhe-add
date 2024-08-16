@@ -140,6 +140,15 @@ impl WebClient {
         self.post_msgpack("/submit_sks", &submission).await
     }
 
+    async fn setup_game(
+        &self,
+        user_id: UserId,
+        action: &UserAction<EncryptedWord>,
+    ) -> Result<UserId, Error> {
+        self.post_msgpack(&format!("/setup_game/{user_id}"), action)
+            .await
+    }
+
     async fn request_action(
         &self,
         user_id: UserId,
@@ -156,7 +165,7 @@ impl WebClient {
         initial_eggs: &[bool],
     ) -> Result<UserId, Error> {
         let action = UserAction::init_game(ck, initial_eggs);
-        self.request_action(user_id, &action).await
+        self.setup_game(user_id, &action).await
     }
 
     pub async fn set_starting_coords(
@@ -166,7 +175,7 @@ impl WebClient {
         starting_coords: &(u8, u8),
     ) -> Result<UserId, Error> {
         let action = UserAction::set_starting_coord(ck, starting_coords);
-        self.request_action(user_id, &action).await
+        self.setup_game(user_id, &action).await
     }
 
     pub async fn move_player(

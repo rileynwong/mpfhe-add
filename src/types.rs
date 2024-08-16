@@ -116,7 +116,8 @@ impl GameStateLocalView {
     // for row, 0 index starts from the top
     // for column, 0 index starts from the left
     pub fn print(&self) {
-        println!("My coordination {:?}", self.my_coord);
+        println!("----------------Local View-------------------");
+        println!("My coordinates {:?}", self.my_coord);
 
         let mut data = vec![];
         for _ in 0..BOARD_DIM {
@@ -140,7 +141,9 @@ impl GameStateLocalView {
     }
 
     pub fn print_with_output(&self, output: &[bool]) {
-        println!("My coordination {:?}", self.my_coord);
+        println!("----------------Global View-------------------");
+        println!("(Only my cell is decrypted)");
+        println!("(My coordinates {:?}", self.my_coord);
 
         let mut data = vec![];
         for _ in 0..BOARD_DIM {
@@ -353,8 +356,9 @@ pub enum ServerState {
     ReadyForJoining,
     /// We can now accept server key shares
     ReadyForServerKeyShares,
-    /// We can now accept ciphertexts
-    ReadyForInputs,
+    /// We can now accept starting coordinates
+    ReadyForSetupGame,
+    ReadyForActions,
     ReadyForRunning,
     RunningFhe,
     CompletedFhe,
@@ -442,6 +446,12 @@ impl ServerStorage {
             .all(|user| matches!(user.storage, UserStorage::Sks(..)))
     }
 
+    pub(crate) fn check_setup_game_complete(&self) -> bool {
+        self.users
+            .iter()
+            .all(|user| matches!(user.storage, UserStorage::StartingCoords))
+    }
+
     pub(crate) fn get_sks(&mut self) -> Result<Vec<ServerKeyShare>, Error> {
         let mut server_key_shares = vec![];
         for (user_id, user) in self.users.iter_mut().enumerate() {
@@ -471,6 +481,7 @@ pub(crate) struct UserRecord {
 pub(crate) enum UserStorage {
     Empty,
     Sks(Box<ServerKeyShare>),
+    StartingCoords,
     DecryptionShare(Option<Vec<AnnotatedDecryptionShare>>),
 }
 
