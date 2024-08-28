@@ -15,6 +15,9 @@ use rocket::{get, post, routes};
 use rocket::{Build, Rocket, State};
 use tokio::sync::Mutex;
 
+use rocket::http::Method;
+use rocket_cors::{AllowedOrigins, CorsOptions};
+
 #[get("/param")]
 async fn get_param(ss: &State<MutexServerStorage>) -> Json<Seed> {
     let ss = ss.lock().await;
@@ -315,7 +318,18 @@ pub fn rocket() -> Rocket<Build> {
     thread_rng().fill_bytes(&mut seed);
     setup(&seed);
 
+    let cors = CorsOptions::default()
+        .allowed_origins(AllowedOrigins::all())
+        .allowed_methods(
+            vec![Method::Get, Method::Post, Method::Patch]
+                .into_iter()
+                .map(From::from)
+                .collect(),
+        )
+        .allow_credentials(true);
+
     rocket::build()
+        .attach(cors.to_cors().unwrap())
         .manage(MutexServerStorage::new(Mutex::new(ServerStorage::new(
             seed,
         ))))
