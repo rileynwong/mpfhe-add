@@ -1,5 +1,5 @@
 use crate::{
-    compiled::{get_cell, lay_egg, move_player, pickup_egg},
+    compiled::{get_cell, lay_egg, move_player, pickup_egg, add_to_int},
     time,
     types::{GameStateEnc, ServerKeyShare, Word},
     UserAction, UserId,
@@ -39,6 +39,10 @@ pub(crate) fn apply_action(
     let mut next_state = state.clone();
     set_parameter_set(PARAMETER);
     match ua {
+        UserAction::AddInt { user_int } => {
+            // add_to_int(user_int)
+            // println!("Adding integer: {}", user_int);
+        }
         UserAction::MovePlayer { direction } => {
             next_state.coords[user_id] = Some(move_player(
                 &state.coords[user_id].as_ref().expect("exist"),

@@ -180,6 +180,7 @@ pub struct GameStateEnc {
 pub enum UserAction<T> {
     InitGame { initial_eggs: T },
     SetStartingCoord { starting_coord: T },
+    AddInt { user_int: T },
     MovePlayer { direction: T },
     LayEgg,
     PickupEgg,
@@ -192,6 +193,7 @@ impl<T> Display for UserAction<T> {
         let text = match self {
             UserAction::InitGame { .. } => "InitGame",
             UserAction::SetStartingCoord { .. } => "SetStartingCoord",
+            UserAction::AddInt { .. } => "AddInt",
             UserAction::MovePlayer { .. } => "MovePlayer",
             UserAction::LayEgg { .. } => "LayEgg",
             UserAction::PickupEgg { .. } => "PickupEgg",
@@ -234,12 +236,22 @@ impl UserAction<EncryptedWord> {
             UserAction::MovePlayer { direction } => UserAction::MovePlayer {
                 direction: unpack_word(direction, user_id),
             },
+            UserAction::AddInt { user_int } => UserAction::AddInt {
+                user_int: unpack_int(user_int, user_id),
+            },
             UserAction::LayEgg => UserAction::LayEgg,
             UserAction::PickupEgg => UserAction::PickupEgg,
             UserAction::GetCell => UserAction::GetCell,
             UserAction::Done => UserAction::Done,
         }
     }
+}
+
+// TODO: Change word to int
+fn unpack_int(word: &EncryptedWord, user_id: UserId) -> Word {
+    word.unseed::<Vec<Vec<u64>>>() // TODO: 32bit? 
+        .key_switch(user_id)
+        .extract_all()
 }
 
 fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
@@ -376,6 +388,9 @@ pub(crate) struct ServerStorage {
     pub(crate) round: usize,
     pub(crate) decryption_shares: DecryptionSharesMap,
 }
+
+// TODO: Add encrypted state integer to server storage
+// ?: Is the type... a Word? a ciphertext vector?
 
 impl ServerStorage {
     pub(crate) fn new(seed: Seed) -> Self {

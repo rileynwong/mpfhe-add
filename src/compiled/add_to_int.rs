@@ -64,6 +64,8 @@ static LEVEL_6: [((usize, bool, CellType), &[GateInput]); 2] = [
     ((25, false, NAND2), &[Tv(13), Tv(24)]),
     ((26, false, XOR2), &[Arg(0, 4), Arg(1, 4)]),
 ];
+
+static LEVEL_7: [((usize, bool, CellType), &[GateInput]); 2] = [
     ((12, false, NAND2), &[Arg(0, 4), Arg(1, 4)]),
     ((27, false, NAND2), &[Tv(25), Tv(26)]),
 ];
@@ -379,129 +381,17 @@ static LEVEL_61: [((usize, bool, CellType), &[GateInput]); 32] = [
     ((12, true, XOR2), &[Tv(131), Tv(43)]),
 ];
 
-static PRUNE_30: [usize; 2] = [
-  60,
-  56,
-];
-
-static PRUNE_60: [usize; 2] = [
-  124,
-  122,
-];
-
-static PRUNE_48: [usize; 2] = [
-  94,
-  98,
-];
-
-static PRUNE_17: [usize; 1] = [
-  4,
-];
-
-static PRUNE_29: [usize; 1] = [
-  55,
-];
-
-static PRUNE_41: [usize; 1] = [
-  82,
-];
-
-static PRUNE_10: [usize; 2] = [
-  30,
-  11,
-];
-
-static PRUNE_53: [usize; 1] = [
-  109,
-];
-
-static PRUNE_22: [usize; 2] = [
-  42,
-  132,
-];
-
-static PRUNE_34: [usize; 2] = [
-  65,
-  69,
-];
-
-static PRUNE_46: [usize; 2] = [
-  96,
-  92,
-];
-
-static PRUNE_58: [usize; 2] = [
-  120,
-  118,
+static PRUNE_2: [usize; 2] = [
+  18,
+  15,
 ];
 
 static PRUNE_45: [usize; 1] = [
   91,
 ];
 
-static PRUNE_14: [usize; 2] = [
-  34,
-  7,
-];
-
-static PRUNE_26: [usize; 2] = [
-  51,
-  47,
-];
-
-static PRUNE_38: [usize; 2] = [
-  74,
-  78,
-];
-
-static PRUNE_50: [usize; 2] = [
-  105,
-  101,
-];
-
-static PRUNE_12: [usize; 2] = [
-  9,
-  32,
-];
-
-static PRUNE_24: [usize; 2] = [
-  130,
-  44,
-];
-
-static PRUNE_36: [usize; 2] = [
-  71,
-  67,
-];
-
-static PRUNE_42: [usize; 2] = [
-  83,
-  87,
-];
-
-static PRUNE_54: [usize; 2] = [
-  110,
-  114,
-];
-
-static PRUNE_4: [usize; 2] = [
-  14,
-  21,
-];
-
-static PRUNE_16: [usize; 2] = [
-  5,
-  36,
-];
-
-static PRUNE_28: [usize; 2] = [
-  49,
-  53,
-];
-
-static PRUNE_40: [usize; 2] = [
-  76,
-  80,
+static PRUNE_33: [usize; 1] = [
+  64,
 ];
 
 static PRUNE_21: [usize; 1] = [
@@ -509,59 +399,108 @@ static PRUNE_21: [usize; 1] = [
 ];
 
 static PRUNE_52: [usize; 2] = [
-  103,
   107,
+  103,
 ];
 
-static PRUNE_33: [usize; 1] = [
-  64,
+static PRUNE_40: [usize; 2] = [
+  80,
+  76,
 ];
 
-static PRUNE_2: [usize; 2] = [
-  18,
-  15,
+static PRUNE_28: [usize; 2] = [
+  49,
+  53,
 ];
 
-static PRUNE_8: [usize; 2] = [
-  12,
-  27,
+static PRUNE_16: [usize; 2] = [
+  5,
+  36,
 ];
 
-static PRUNE_20: [usize; 2] = [
-  40,
-  1,
+static PRUNE_4: [usize; 2] = [
+  21,
+  14,
 ];
 
-static PRUNE_32: [usize; 2] = [
-  62,
-  58,
+static PRUNE_54: [usize; 2] = [
+  114,
+  110,
 ];
 
-static PRUNE_44: [usize; 2] = [
-  85,
-  89,
+static PRUNE_42: [usize; 2] = [
+  83,
+  87,
 ];
 
-static PRUNE_13: [usize; 1] = [
-  8,
+static PRUNE_30: [usize; 2] = [
+  60,
+  56,
 ];
 
-static PRUNE_56: [usize; 2] = [
-  116,
-  112,
-];
-
-static PRUNE_25: [usize; 1] = [
-  46,
-];
-
-static PRUNE_6: [usize; 2] = [
-  13,
-  24,
-];
-
-static PRUNE_49: [usize; 1] = [
-  100,
+static PRUNE_61: [usize; 62] = [
+  131,
+  52,
+  128,
+  97,
+  35,
+  66,
+  111,
+  63,
+  125,
+  77,
+  108,
+  29,
+  43,
+  88,
+  119,
+  26,
+  57,
+  102,
+  54,
+  23,
+  68,
+  6,
+  37,
+  99,
+  20,
+  113,
+  79,
+  17,
+  48,
+  127,
+  31,
+  45,
+  28,
+  59,
+  93,
+  121,
+  90,
+  25,
+  104,
+  39,
+  70,
+  115,
+  22,
+  84,
+  129,
+  50,
+  19,
+  81,
+  95,
+  33,
+  2,
+  126,
+  16,
+  123,
+  61,
+  106,
+  75,
+  72,
+  10,
+  41,
+  117,
+  86,
 ];
 
 static PRUNE_18: [usize; 2] = [
@@ -569,73 +508,136 @@ static PRUNE_18: [usize; 2] = [
   38,
 ];
 
+static PRUNE_49: [usize; 1] = [
+  100,
+];
+
 static PRUNE_37: [usize; 1] = [
   73,
 ];
 
-static PRUNE_61: [usize; 62] = [
-  6,
-  37,
-  68,
-  99,
-  20,
-  113,
-  102,
-  23,
-  54,
-  31,
-  93,
-  45,
-  127,
-  79,
-  17,
-  48,
-  111,
-  63,
-  125,
-  52,
-  35,
-  97,
-  66,
-  128,
-  43,
-  88,
-  26,
-  119,
-  57,
-  77,
-  108,
-  29,
-  61,
-  123,
-  106,
-  75,
-  33,
-  2,
-  95,
-  126,
-  16,
-  86,
-  117,
-  131,
-  72,
-  10,
-  41,
-  104,
-  25,
-  59,
-  28,
-  90,
-  121,
-  129,
-  50,
-  19,
-  81,
-  39,
-  70,
-  22,
-  115,
-  84,
+static PRUNE_6: [usize; 2] = [
+  13,
+  24,
+];
+
+static PRUNE_25: [usize; 1] = [
+  46,
+];
+
+static PRUNE_56: [usize; 2] = [
+  116,
+  112,
+];
+
+static PRUNE_13: [usize; 1] = [
+  8,
+];
+
+static PRUNE_44: [usize; 2] = [
+  85,
+  89,
+];
+
+static PRUNE_32: [usize; 2] = [
+  62,
+  58,
+];
+
+static PRUNE_20: [usize; 2] = [
+  1,
+  40,
+];
+
+static PRUNE_8: [usize; 2] = [
+  12,
+  27,
+];
+
+static PRUNE_58: [usize; 2] = [
+  118,
+  120,
+];
+
+static PRUNE_46: [usize; 2] = [
+  96,
+  92,
+];
+
+static PRUNE_34: [usize; 2] = [
+  65,
+  69,
+];
+
+static PRUNE_22: [usize; 2] = [
+  42,
+  132,
+];
+
+static PRUNE_53: [usize; 1] = [
+  109,
+];
+
+static PRUNE_41: [usize; 1] = [
+  82,
+];
+
+static PRUNE_10: [usize; 2] = [
+  11,
+  30,
+];
+
+static PRUNE_29: [usize; 1] = [
+  55,
+];
+
+static PRUNE_60: [usize; 2] = [
+  122,
+  124,
+];
+
+static PRUNE_17: [usize; 1] = [
+  4,
+];
+
+static PRUNE_48: [usize; 2] = [
+  94,
+  98,
+];
+
+static PRUNE_36: [usize; 2] = [
+  71,
+  67,
+];
+
+static PRUNE_24: [usize; 2] = [
+  130,
+  44,
+];
+
+static PRUNE_12: [usize; 2] = [
+  32,
+  9,
+];
+
+static PRUNE_50: [usize; 2] = [
+  105,
+  101,
+];
+
+static PRUNE_38: [usize; 2] = [
+  74,
+  78,
+];
+
+static PRUNE_26: [usize; 2] = [
+  51,
+  47,
+];
+
+static PRUNE_14: [usize; 2] = [
+  34,
+  7,
 ];
 
 fn prune(temp_nodes: &mut HashMap<usize, Ciphertext>, temp_node_ids: &[usize]) {
@@ -644,10 +646,6 @@ fn prune(temp_nodes: &mut HashMap<usize, Ciphertext>, temp_node_ids: &[usize]) {
   }
 }
 
-// Int -> 32/64 bits -- make sure they match
-// Integer -> bits -> encrypt each bit -> pass into fxn
-// Out is vector of bits -> decrypt the bits -> recompose as an integer
-// char 8 bits, short 16 bits, int is 32? bits, long is 64? bits
 pub fn add_to_int(int_to_add: &Vec<Ciphertext>, state: &Vec<Ciphertext>) -> Vec<Ciphertext> {
     let parameter_set = get_active_parameter_set();
     rayon::ThreadPoolBuilder::new()

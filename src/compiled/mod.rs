@@ -2,6 +2,8 @@
 #![allow(clippy::all)]
 
 #[rustfmt::skip]
+mod add_to_int;
+#[rustfmt::skip]
 mod get_cell;
 #[rustfmt::skip]
 mod lay_egg;
@@ -10,6 +12,7 @@ mod move_player;
 #[rustfmt::skip]
 mod pickup_egg;
 
+pub(super) use add_to_int::add_to_int;
 pub(super) use get_cell::get_cell;
 pub(super) use lay_egg::lay_egg;
 pub(super) use move_player::move_player;
