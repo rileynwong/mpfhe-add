@@ -188,6 +188,20 @@ impl WebClient {
         self.request_action(user_id, &action).await
     }
 
+    pub async fn add_int(
+        &self,
+        ck: &ClientKey,
+        user_id: UserId,
+        user_int: u8,
+    ) -> Result<UserId, Error> {
+        let action = UserAction::add_int(ck, user_int);
+        self.request_action(user_id, &action).await
+    }
+
+    pub async fn view_int(&self, user_id: UserId) -> Result<UserId, Error> {
+        self.request_action(user_id, &UserAction::ViewInt).await
+    }
+
     pub async fn lay_egg(&self, user_id: UserId) -> Result<UserId, Error> {
         self.request_action(user_id, &UserAction::LayEgg).await
     }

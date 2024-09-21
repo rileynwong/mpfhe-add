@@ -40,7 +40,9 @@ pub(crate) fn apply_action(
     set_parameter_set(PARAMETER);
     match ua {
         UserAction::AddInt { user_int } => {
-            // add_to_int(user_int)
+            // happening on server side
+            // TODO: pass arg
+            // ?? = add_to_int(&user_int)
             // println!("Adding integer: {}", user_int);
         }
         UserAction::MovePlayer { direction } => {
@@ -59,6 +61,7 @@ pub(crate) fn apply_action(
         UserAction::InitGame { .. }
         | UserAction::SetStartingCoord { .. }
         | UserAction::GetCell { .. }
+        | UserAction::ViewInt { .. }
         | UserAction::Done => {
             unreachable!("Shouldn't be in the action queue")
         }

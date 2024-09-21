@@ -151,6 +151,8 @@ async fn request_action(
 
     let result = match action {
         UserAction::MovePlayer { .. }
+        | UserAction::AddInt { .. }
+        | UserAction::ViewInt { .. }
         | UserAction::LayEgg { .. }
         | UserAction::PickupEgg { .. }
         | UserAction::GetCell { .. } => {

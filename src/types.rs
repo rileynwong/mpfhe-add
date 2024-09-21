@@ -74,12 +74,16 @@ fn coords_to_binary<const N: usize>(x: u8, y: u8) -> [bool; N] {
     result
 }
 
+// TODO: Int to binary? 
+
 #[derive(Debug, Clone)]
 pub struct GameStateLocalView {
     user_id: UserId,
     my_coord: (u8, u8),
     eggs_laid: Vec<Vec<bool>>,
 }
+
+// TODO: Add view_int as part of local view?
 
 impl GameStateLocalView {
     // x is the row index, y is the column index
@@ -182,6 +186,7 @@ pub enum UserAction<T> {
     SetStartingCoord { starting_coord: T },
     AddInt { user_int: T },
     MovePlayer { direction: T },
+    ViewInt,
     LayEgg,
     PickupEgg,
     GetCell,
@@ -194,6 +199,7 @@ impl<T> Display for UserAction<T> {
             UserAction::InitGame { .. } => "InitGame",
             UserAction::SetStartingCoord { .. } => "SetStartingCoord",
             UserAction::AddInt { .. } => "AddInt",
+            UserAction::ViewInt { .. } => "ViewInt",
             UserAction::MovePlayer { .. } => "MovePlayer",
             UserAction::LayEgg { .. } => "LayEgg",
             UserAction::PickupEgg { .. } => "PickupEgg",
@@ -224,6 +230,14 @@ impl UserAction<EncryptedWord> {
         }
     }
 
+    pub fn add_int(ck: &ClientKey, user_int: u8) -> Self {
+        // TODO: are ints u8? write u8_to_binary fxn for ints   
+        let user_int = u8_to_binary::<8>(user_int as u8);
+        Self::AddInt {
+            user_int: ck.encrypt(user_int.as_slice()),
+        }
+    }
+ 
     pub fn unpack(&self, user_id: UserId) -> UserAction<Word> {
         set_parameter_set(PARAMETER);
         match &self {
@@ -237,21 +251,15 @@ impl UserAction<EncryptedWord> {
                 direction: unpack_word(direction, user_id),
             },
             UserAction::AddInt { user_int } => UserAction::AddInt {
-                user_int: unpack_int(user_int, user_id),
+                user_int: unpack_word(user_int, user_id),
             },
+            UserAction::ViewInt => UserAction::ViewInt,
             UserAction::LayEgg => UserAction::LayEgg,
             UserAction::PickupEgg => UserAction::PickupEgg,
             UserAction::GetCell => UserAction::GetCell,
             UserAction::Done => UserAction::Done,
         }
     }
-}
-
-// TODO: Change word to int
-fn unpack_int(word: &EncryptedWord, user_id: UserId) -> Word {
-    word.unseed::<Vec<Vec<u64>>>() // TODO: 32bit? 
-        .key_switch(user_id)
-        .extract_all()
 }
 
 fn unpack_word(word: &EncryptedWord, user_id: UserId) -> Word {
@@ -381,6 +389,9 @@ pub(crate) struct ServerStorage {
     pub(crate) state: ServerState,
     pub(crate) users: Vec<UserRecord>,
 
+    // TODO: state_int
+    pub(crate) state_int: Option<EncryptedWord>,
+
     pub(crate) game_state: Option<GameStateEnc>,
     pub(crate) action_queue: Vec<(UserId, UserAction<Word>)>,
     // in this case it is the user's cell
@@ -389,15 +400,14 @@ pub(crate) struct ServerStorage {
     pub(crate) decryption_shares: DecryptionSharesMap,
 }
 
-// TODO: Add encrypted state integer to server storage
-// ?: Is the type... a Word? a ciphertext vector?
-
 impl ServerStorage {
     pub(crate) fn new(seed: Seed) -> Self {
         Self {
             seed,
             state: ServerState::ReadyForJoining,
             users: vec![],
+
+            state_int: None, // Should this be encrypted? -- Option
 
             game_state: None,
             action_queue: vec![],
